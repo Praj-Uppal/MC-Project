@@ -13,16 +13,7 @@
 
 #define DRIVE_SPEED_MM_S ((int16_t)100)
 #define ROTATE_SPEED_MM_S ((int16_t)100)
-// static void Send_Kobuki_Move(int16_t speed, int16_t radius) {
-//   uint8_t payload[6];
-//   payload[0] = 0x01U; /* Base Control sub - packet ID . */
-//   payload[1] = 0x04U; /* Speed and radius occupy four bytes . */
-//   payload[2] = (uint8_t)(speed & 0xFF);
-//   payload[3] = (uint8_t)((uint16_t)speed >> 8);
-//   payload[4] = (uint8_t)(radius & 0xFF);
-//   payload[5] = (uint8_t)((uint16_t)radius >> 8);
-//   Kobuki_Tx(payload, sizeof(payload));
-// }
+
 int main(void) {
   Kobuki_Typedef my_kobuki = {0};
   US_Typedef ultrasonic_object = {0};
