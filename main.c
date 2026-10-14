@@ -19,7 +19,7 @@
 #define TRUE 1
 
 // States
-static enum { IDLE, SEARCH, OBSTACLE, AVOID, OBJECT } state;
+static enum { IDLE, SEARCH, OBSTACLE, AVOID, OBJECT, PATHFIND } state;
 
 int main(void) {
   // Both of these only for testing purposes . Not required
@@ -80,6 +80,8 @@ int main(void) {
     case AVOID:
       break;
     case OBJECT:
+      break;
+    case PATHFIND:
       break;
     }
   }
