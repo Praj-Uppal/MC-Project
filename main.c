@@ -14,45 +14,73 @@
 #define DRIVE_SPEED_MM_S ((int16_t)100)
 #define ROTATE_SPEED_MM_S ((int16_t)100)
 
+// Logic
+#define NULL 0
+#define TRUE 1
+
+// States
+static enum { IDLE, SEARCH, OBSTACLE, AVOID, OBJECT } state;
+
 int main(void) {
-  Kobuki_Typedef my_kobuki = {0};
-  US_Typedef ultrasonic_object = {0};
-  uint8_t is_running = 0U;
-  uint8_t is_rotating = 0U;
+  // Both of these only for testing purposes . Not required
+  volatile uint16_t ultrasonic_read;
+  volatile uint16_t adc_read;
+  Kobuki_Typedef kobuki;
+  US_Typedef object;
+  Kobuki_LED_Enum led_1, led_2;
   UART_Init();
   ADC_Init();
   Ultrasonic_Init();
-  // Send_Kobuki_Move(0, 0);
-  Kobuki_Drive(0); // Command zero velocity . IDLE STATE
-  Kobuki_Rotate(0);
+  state = IDLE;
+  led_1 = OFF;
+  led_2 = OFF;
   while (1) {
-    Kobuki_Read(&my_kobuki);
-    Ultrasonic_Detect(&ultrasonic_object);
-    /* Button 0 selects forward motion when the path is clear . */
-    if (((my_kobuki.button & 1U) != 0U) && (ultrasonic_object.detected == 0U)) {
-      is_running = 1U;
-      is_rotating = 0U;
-    }
-    /* Button 2 selects rotation when the path is clear . */
-    else if (((my_kobuki.button & 4U) != 0U) &&
-             (ultrasonic_object.detected == 0U)) {
-      is_rotating = 1U;
-      is_running = 0U;
-    }
-    /* Button 1 , bumper or ultrasonic detection stops the robot .
-     */
-    if (((my_kobuki.button & 2U) != 0U) || (my_kobuki.bumper != 0U) ||
-        (ultrasonic_object.detected != 0U)) {
-      is_running = 0U;
-      is_rotating = 0U;
-    }
-    if (is_running != 0U)
-      Kobuki_Drive(100);
-    else if (is_rotating != 0U)
-      Kobuki_Rotate(100);
-    else {
-      Kobuki_Drive(0); // Command zero velocity . IDLE STATE
-      Kobuki_Rotate(0);
+    Kobuki_Read(&kobuki);
+    Ultrasonic_Detect(&object);
+    // Both of these only for testing purposes . Not required 
+    ultrasonic_read = Ultrasonic_Read();
+    adc_read = ADC_Read(ADC_CHANNEL_1);
+    Kobuki_Update_LEDs(led_1, led_2);
+    // A TEST FSM
+    switch (state) {
+    case IDLE:
+      if (kobuki.button == BUTTON_0_START) {
+        state = SEARCH;
+        led_1 = RED;
+        Kobuki_Rotate_Angle_Setpoint(kobuki.angle, 450);
+        // Kobuki_Drive_Distance_Setpoint ( kobuki . distance ,100) ;
+      } else if (kobuki.button == BUTTON_1_STOP) {
+        state = SEARCH;
+        led_1 = RED;
+        Kobuki_Rotate_Angle_Setpoint(kobuki.angle, 270);
+        // Kobuki_Drive_Distance_Setpoint ( kobuki . distance , -100) ;
+      } else if (kobuki.button == BUTTON_2_ROTATE) {
+        state = SEARCH;
+        led_1 = RED;
+        Kobuki_Rotate_Angle_Setpoint(kobuki.angle, 90);
+        // Kobuki_Drive_Distance_Setpoint ( kobuki .
+      } else {
+        Kobuki_Drive(STOP);
+      }
+      break;
+    case SEARCH:
+      if ((kobuki.wheeldrop != NULL) |
+          ((kobuki.bumper + kobuki.cliff) != NULL) |
+          (kobuki.rotation_complete == TRUE) |
+          (kobuki.distance_complete == TRUE)) {
+        state = IDLE;
+        led_1 = YELLOW;
+      } else {
+        Kobuki_Rotate_Angle(kobuki.angle);
+        // Kobuki_Drive_Distance ( kobuki . distance );
+      }
+      break;
+    case OBSTACLE:
+      break;
+    case AVOID:
+      break;
+    case OBJECT:
+      break;
     }
   }
 }

@@ -30,7 +30,8 @@ void UART_Init(void) {
 
 void UART_Tx(uint8_t byte) {
   // Wait until Transmit Data Register is Empty ( TXE ) flag isset
-  while (!(USART3->ISR & USART_ISR_TXE));
+  while (!(USART3->ISR & USART_ISR_TXE))
+    ;
   // Write the byte to the Transmit Data Register
   USART3->TDR = byte;
 }
@@ -42,7 +43,8 @@ uint8_t UART_Rx(void) {
     USART3->ICR = USART_ICR_ORECF; // Write 1 to clear the Overrun flag
   }
   // Wait until the Read Data Register Not Empty ( RXNE ) flag is set
-  while (!(USART3->ISR & USART_ISR_RXNE));
+  while (!(USART3->ISR & USART_ISR_RXNE))
+    ;
   // Reading RDR automatically clears the RXNE flag
   return (uint8_t)(USART3->RDR & 0xFF);
 }
@@ -74,7 +76,7 @@ uint8_t Kobuki_Rx(uint8_t *feedback, uint32_t size_feedback) {
       }
     }
   }
-  // 2. Read Payload Length , first byte is size of payload in bytes 
+  // 2. Read Payload Length , first byte is size of payload in bytes
   size_payload = UART_Rx();
   checksum ^= size_payload; // checksum is XOR ed value of entire bytestream
   // 3. Determine safe boundary to prevent array overflow
@@ -93,37 +95,4 @@ uint8_t Kobuki_Rx(uint8_t *feedback, uint32_t size_feedback) {
   // 6. Verify Checksum
   rx_checksum = UART_Rx();          // checksum from kobuki - final byte
   return (checksum != rx_checksum); // 0 = Success , 1 = Error
-}
-
-typedef struct {
-  uint8_t cliff;
-  uint8_t bumper;
-  uint8_t wheeldrop;
-  uint8_t button;
-} Kobuki_Typedef;
-
-// Define buffer for feedback , place these definitions in kobuki.h later
-#define SIZE_FEEDBACK 14
-// Buffer defintions for payload
-#define BUMPER 4
-#define WHEEL_DROP 5
-#define CLIFF 6
-#define BUTTON 13
-// kobuki read datastream
-void Kobuki_Read(Kobuki_Typedef *kobuki) {
-  // Init buffer & checksum
-  uint8_t kobuki_rx_buffer[SIZE_FEEDBACK];
-  uint8_t checksum_result;
-  // Read kobuki Tx data stream
-  checksum_result = Kobuki_Rx(kobuki_rx_buffer, SIZE_FEEDBACK);
-  // If checksum ’ checks out ’, update sensor variables from buffer
-  if (checksum_result == 0) {
-    kobuki -> bumper = kobuki_rx_buffer[BUMPER];
-    kobuki -> wheeldrop = kobuki_rx_buffer[WHEEL_DROP];
-    kobuki -> cliff = kobuki_rx_buffer[CLIFF];
-    kobuki -> button = kobuki_rx_buffer[BUTTON];
-  }
-  // otherwise do not update
-  else {
-  }
 }
