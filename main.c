@@ -47,18 +47,18 @@ int main(void) {
       if (kobuki.button == BUTTON_0_START) {
         state = SEARCH;
         led_1 = RED;
-        Kobuki_Rotate_Angle_Setpoint(kobuki.angle, 450);
-        // Kobuki_Drive_Distance_Setpoint ( kobuki . distance ,100) ;
+      //  Kobuki_Rotate_Angle_Setpoint(kobuki.angle, 450);
+        Kobuki_Drive_Distance_Setpoint( kobuki.distance ,100) ;
       } else if (kobuki.button == BUTTON_1_STOP) {
         state = SEARCH;
         led_1 = RED;
-        Kobuki_Rotate_Angle_Setpoint(kobuki.angle, 270);
-        // Kobuki_Drive_Distance_Setpoint ( kobuki . distance , -100) ;
+      //Kobuki_Rotate_Angle_Setpoint(kobuki.angle,90);
+      Kobuki_Drive_Distance_Setpoint( kobuki.distance , 300) ;
       } else if (kobuki.button == BUTTON_2_ROTATE) {
         state = SEARCH;
         led_1 = RED;
-        Kobuki_Rotate_Angle_Setpoint(kobuki.angle, 90);
-        // Kobuki_Drive_Distance_Setpoint ( kobuki .
+       // Kobuki_Rotate_Angle_Setpoint(kobuki.angle, 90);
+        Kobuki_Drive_Distance_Setpoint(kobuki.distance,500);
       } else {
         Kobuki_Drive(STOP);
       }
@@ -71,8 +71,8 @@ int main(void) {
         state = IDLE;
         led_1 = YELLOW;
       } else {
-        Kobuki_Rotate_Angle(kobuki.angle);
-        // Kobuki_Drive_Distance ( kobuki . distance );
+        //Kobuki_Rotate_Angle(kobuki.angle);
+        Kobuki_Drive_Distance ( kobuki.distance );
       }
       break;
     case OBSTACLE:
