@@ -19,10 +19,15 @@
 #define TRUE 1
 
 // 0 = A, 1= B
-volatile bool state = 0
 
-    // States
-    static enum
+static enum
+{
+    LAYOUT_A,
+    LAYOUT_B
+} LayoutState;
+
+// States
+static enum
 {
     IDLE,
     SEARCH,
@@ -79,11 +84,12 @@ int main(void)
         case ORIENT:
             // Measure Distance to the bollard
             // Based of distance detect layout
-            //  if (325 + calibration <distance < 350 + calibration) layout A. else if (...) layout B
-            //
+            //  if (325 + calibration <distance < 375 + calibration) layout A. else if (...) layout B
+            // based on which layout
             // Rotate 90 CCW or CW
             // Based on layout A or B
-            // Orient to correct path. and enter pathfind
+            // Orient to correct path. orientation is complete
+            // and then enter pathfind
             break;
         case PATHFIND:
             // Hardcode path for the current layout
