@@ -16,10 +16,6 @@
 #define ROTATE_SPEED_MM_S ((int16_t)100)
 #define ULTRASONIC_CALIBRATION 10
 
-// Logic
-#define NULL 0
-#define TRUE 1
-
 // 0 = A, 1= B
 
 typedef enum { LAYOUT_A, LAYOUT_B } LayoutState;
@@ -43,7 +39,7 @@ void Kobuki_Rotate_AbsAngleTickBased(int16_t current_angle_tick,
   // Calculate the relative difference in ticks. This would give us the amount
   // of ticks to rotate by to get to target angle.
   int32_t relative_ticks =
-      (int32_t)(current_angle_tick) - (int32_t)(target_angle_tick);
+      (int32_t)(target_angle_tick) - (int32_t)(current_angle_tick);
 
   // Convert it to a relative angle reading. This is to use the wrapper for
   // setpoint.
@@ -113,12 +109,20 @@ bool align(int16_t distanceThresh) {
     case STATE_DONE:
       // The next time the align function enters here,
       // The alignment rotation should be complete. Return 1.
+      // Return to init state in case need to use again
+      state = STATE_INIT;
       return 1;
       break;
     default:
       break;
   }
   return 0;  // Return 0 to indicate in process.
+}
+void Kobuki_stop() {
+  Kobuki_Drive(STOP);
+  Kobuki_Rotate(STOP);
+  kobuki.rotation_complete = 1;
+  kobuki.distance_complete = 1;
 }
 
 int main(void) {
@@ -147,18 +151,17 @@ int main(void) {
     switch (current_state) {
       case IDLE:  // IDLE case
         // Stop and drive or rotation commands
-        Kobuki_Drive(STOP);
-        Kobuki_Rotate(STOP);
+        Kobuki_stop();
         // Await search button press.
         if (kobuki.button == BUTTON_0_START) {
           current_state = SEARCH;  // Switch to search mode.
           led_1 = RED;             //
         }
         break;
-      case SEARCH:                 // Aligns with blocking bollard
-        bool ret = align(500);     // Align FSM subroutine
-        if (ret == 1) {            // If alignment finished
-          current_state = ORIENT;  // Set to ORIENT state
+      case SEARCH:                       // Aligns with blocking bollard
+        bool volatile ret = align(500);  // Align FSM subroutine
+        if (ret == 1) {                  // If alignment finished
+          current_state = ORIENT;        // Set to ORIENT state
           // Check current ultrasonic reading
           ultrasonic_read = Ultrasonic_Read() + ULTRASONIC_CALIBRATION;
           // based on distance select layout A or layout B.

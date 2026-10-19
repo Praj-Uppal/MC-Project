@@ -82,8 +82,9 @@ void Kobuki_Rotate_Angle(int16_t current_angle_tick) {
       // Does this make sense ? Is there a simpler way?
     }
   }
-  if (abs(error) <= 0) {
+  if (abs(error) <= 1) {
     rotation_complete = 1;
+    Kobuki_Rotate(STOP);
   } else {
     speed = (sign(error) * MIN_SPEED) + (int16_t)(GAIN_ROTATE * error);
     Kobuki_Rotate(speed);
@@ -114,6 +115,7 @@ void Kobuki_Drive_Distance(uint16_t current_distance_tick) {
   }
   if (abs(error) <= 2) {
     distance_complete = 1;
+    Kobuki_Drive(STOP);
   } else {
     speed = (sign(error) * MIN_SPEED) + (int16_t)(GAIN_DRIVE * error);
     Kobuki_Drive(speed);
