@@ -1,25 +1,26 @@
 #include "kobuki.h"
-#include <stdlib.h> // include this at the top
+
+#include <stdlib.h>  // include this at the top
 
 // Parameters for distance and angle calculation
 // These can be placed in kobuki .h:
 #define PI (3.14159)
-#define WHEEL_RADIUS (35.0) // mm
+#define WHEEL_RADIUS (35.0)  // mm
 #define REVOLUTIONS_PER_TICK (132.0 / 6545.0) / 52.0
-#define MM_PER_TICK (2.0 * PI * WHEEL_RADIUS * REVOLUTIONS_PER_TICK )
+#define MM_PER_TICK (2.0 * PI * WHEEL_RADIUS * REVOLUTIONS_PER_TICK)
 #define DEG_PER_TICK (1.0 / 100.0)
 #define GAIN_ROTATE (1.0 / 0.90)
 #define GAIN_DRIVE (100.0 / 100.0)
 #define sign(x) ((int8_t)((x) >= 0 ? 1 : -1))
 
 // static variables and flags , keep these here in kobuki .c
-static volatile int32_t setpoint_distance_tick ;
+static volatile int32_t setpoint_distance_tick;
 static volatile int16_t setpoint_angle_deg;
 static uint8_t rotation_complete = 0;
 static uint8_t distance_complete = 0;
 
 // Updated Kobuki_Read () remember to replace the old wrapper
-void Kobuki_Read(Kobuki_Typedef *kobuki) {
+void Kobuki_Read(Kobuki_Typedef* kobuki) {
   uint16_t distance_LSB;
   uint16_t distance_MSB;
   int16_t angle_LSB;
@@ -29,7 +30,7 @@ void Kobuki_Read(Kobuki_Typedef *kobuki) {
   uint8_t checksum_result;
   // Read kobuki Tx data stream
   checksum_result = Kobuki_Rx(kobuki_rx_buffer, SIZE_FEEDBACK);
-  // If checksum ’checks out ’, update sensor variables from buffer 
+  // If checksum ’checks out ’, update sensor variables from buffer
   if (checksum_result == 0) {
     distance_LSB = kobuki_rx_buffer[DIST_LSB];
     angle_LSB = kobuki_rx_buffer[ANGLE_LSB];
@@ -57,9 +58,9 @@ void Kobuki_Rotate_Angle_Setpoint(int16_t current_angle_tick,
   rotation_complete = 0;
   // initial angle
   init_angle = (int32_t)((double)(current_angle_tick + (int32_t)18000) *
-                         DEG_PER_TICK); // [ -18000 ,18000] -> [0 - 360] deg
-      // setpoint angle
-      setpoint_angle_deg = (init_angle + rot_angle_deg + 360) % 360; // [0 -360]
+                         DEG_PER_TICK);  // [ -18000 ,18000] -> [0 - 360] deg
+  // setpoint angle
+  setpoint_angle_deg = (init_angle + rot_angle_deg + 360) % 360;  // [0 -360]
 }
 void Kobuki_Rotate_Angle(int16_t current_angle_tick) {
   volatile int16_t speed;
@@ -71,13 +72,12 @@ void Kobuki_Rotate_Angle(int16_t current_angle_tick) {
   // Check for non - optimal rotation angle
   if (abs(error) > 180) {
     // Always rotate with the minimum angle e.g. +270 -> -90.
-     // Introduces singularity - loses sign and truncates error.
-     error = -sign(error) * (abs(error) % 180);
+    // Introduces singularity - loses sign and truncates error.
+    error = -sign(error) * (abs(error) % 180);
     // Special cases in circular buffer . Offset to correct error.
     if ((error < 0) && (current_angle_deg < setpoint_angle_deg)) {
       error = -(error + 180);
-    }
-    else if ((error > 0) && (current_angle_deg > setpoint_angle_deg)) {
+    } else if ((error > 0) && (current_angle_deg > setpoint_angle_deg)) {
       error = -(error - 180);
       // Does this make sense ? Is there a simpler way?
     }
@@ -123,10 +123,10 @@ void Kobuki_Drive_Distance(uint16_t current_distance_tick) {
 // This wrapper is based on the General Purpose Output information in the Kobuki
 // bytestream document
 #define EXTERN_PWR 0x30
-    void Kobuki_Update_LEDs(Kobuki_LED_Enum led_1_colour,
-                            Kobuki_LED_Enum led_2_colour) {
+void Kobuki_Update_LEDs(Kobuki_LED_Enum led_1_colour,
+                        Kobuki_LED_Enum led_2_colour) {
   // Split LSB & MSB for payload
-  uint8_t GPO_lsb = EXTERN_PWR; // keep 5V AND 3.3V on
+  uint8_t GPO_lsb = EXTERN_PWR;  // keep 5V AND 3.3V on
   uint8_t GPO_msb = led_1_colour | (uint8_t)(led_2_colour << 2);
   uint8_t payload[] = {0x0C, 0x02, GPO_lsb, GPO_msb};
   Kobuki_Tx(payload, sizeof(payload));
