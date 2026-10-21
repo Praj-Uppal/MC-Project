@@ -2,7 +2,8 @@
 #define STM32G474xx
 #include "stm32g4xx.h"
 
-void UART_Init(void) {
+void UART_Init(void)
+{
   // 1. Enable peripheral clocks
   RCC->AHB2ENR |= RCC_AHB2ENR_GPIOCEN;
   RCC->APB1ENR1 |= RCC_APB1ENR1_USART3EN;
@@ -28,7 +29,8 @@ void UART_Init(void) {
   USART3->CR1 |= USART_CR1_UE;
 }
 
-void UART_Tx(uint8_t byte) {
+void UART_Tx(uint8_t byte)
+{
   // Wait until Transmit Data Register is Empty ( TXE ) flag isset
   while (!(USART3->ISR & USART_ISR_TXE))
     ;
@@ -36,42 +38,51 @@ void UART_Tx(uint8_t byte) {
   USART3->TDR = byte;
 }
 
-uint8_t UART_Rx(void) {
+uint8_t UART_Rx(void)
+{
   // If an Overrun Error ( ORE ) occurs , clear it so we don ’t get permanently
   // stuck
-  if (USART3->ISR & USART_ISR_ORE) {
+  if (USART3->ISR & USART_ISR_ORE)
+  {
     USART3->ICR = USART_ICR_ORECF; // Write 1 to clear the Overrun flag
   }
   // Wait until the Read Data Register Not Empty ( RXNE ) flag is set
   while (!(USART3->ISR & USART_ISR_RXNE))
-    ;
+  {
+  };
   // Reading RDR automatically clears the RXNE flag
   return (uint8_t)(USART3->RDR & 0xFF);
 }
 
-void Kobuki_Tx(uint8_t *payload, uint8_t size_payload) {
+void Kobuki_Tx(uint8_t *payload, uint8_t size_payload)
+{
   uint8_t checksum = 0, i;
   UART_Tx(0xAA);            // Send header 0
   UART_Tx(0x55);            // Send header 1
   UART_Tx(size_payload);    // Send size of payload in bytes
   checksum ^= size_payload; // Calculate running checksum
   // Send each byte of payload one - by - one
-  for (i = 0; i < size_payload; i++) {
+  for (i = 0; i < size_payload; i++)
+  {
     UART_Tx(payload[i]);
     checksum ^= payload[i];
   }
   UART_Tx(checksum); // Send checksum
 }
 
-uint8_t Kobuki_Rx(uint8_t *feedback, uint32_t size_feedback) {
+uint8_t Kobuki_Rx(uint8_t *feedback, uint32_t size_feedback)
+{
   uint8_t feedback_header = 0, size_payload = 0, checksum = 0, rx_checksum = 0;
   uint32_t i;
   // 1. Find the valid 0 xAA 0 x55 sequence
-  while (1) {
+  while (1)
+  {
     feedback_header = UART_Rx();
-    if (feedback_header == 0xAA) {
+    if (feedback_header == 0xAA)
+    {
       feedback_header = UART_Rx();
-      if (feedback_header == 0x55) {
+      if (feedback_header == 0x55)
+      {
         break; // Valid start found , exit finding loop
       }
     }
@@ -83,13 +94,15 @@ uint8_t Kobuki_Rx(uint8_t *feedback, uint32_t size_feedback) {
   uint32_t limit =
       (size_payload < size_feedback) ? size_payload : size_feedback;
   // 4. Read into array of bytestream , this is the basic sensor data
-  for (i = 0; i < limit; i++) {
+  for (i = 0; i < limit; i++)
+  {
     feedback[i] = UART_Rx();
     checksum ^= feedback[i];
   }
   // 5. Read and discard remaining payload ( just for checksum ) , this is the
   // size of rest of byestream
-  for (i = limit; i < size_payload; i++) {
+  for (i = limit; i < size_payload; i++)
+  {
     checksum ^= UART_Rx();
   }
   // 6. Verify Checksum
