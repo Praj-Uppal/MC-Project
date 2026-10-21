@@ -5,7 +5,6 @@
 #include "G474RE_Drivers/uart.h"
 #include "Kobuki_Drivers/kobuki.h"
 #include "Ultrasonic/ultrasonic.h"
-#include "orient.c"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -20,8 +19,10 @@
 #define DRIVE_SPEED_MM_S ((int16_t)100) // Drive speed in millimeters per second
 #define ROTATE_SPEED_MM_S                                                      \
   ((int16_t)100)                  // Rotate speed in millimeters per second
-#define ULTRASONIC_CALIBRATION 10 // Calibration value for the ultrasonic sensor
-
+#define ULTRASONIC_CALIBRATION 50 // Calibration value for the ultrasonic sensor
+#define FRONT_LENGTH 245 // Length of the front of the robot
+#define TOTAL_CALIBRATION (ULTRASONIC_CALIBRATION - FRONT_LENGTH) // Total calibration value
+bool buttonFlag = 0; // Flag to indicate if button 2 has been pressed
 typedef enum {
   LAYOUT_A,
   LAYOUT_B
@@ -136,6 +137,48 @@ bool align(int16_t distanceThresh) {
   return 0; // Return 0 to indicate in process.
 }
 
+// Vatsal - Orient Code
+uint16_t bollard_distance = 0; // Variable to store the distance to the bollard
+uint8_t layout_detected = 0;   // Flag to indicate if a bollard is detected
+
+int Layout_Detect(void) {
+  // Read the distance from the ultrasonic sensor
+  if (!kobuki.rotation_complete) {
+    return 0;
+  } // Only read distance if rotation is complete
+
+  bollard_distance = Ultrasonic_Read() + ULTRASONIC_CALIBRATION;
+  volatile static AAstate state = STATE_INIT;
+  switch (state) {
+  case STATE_INIT:
+    // Check if the distance is within the range for layout A or B
+    if (325 <= bollard_distance && bollard_distance <= 375) {
+      layout = LAYOUT_A;
+      state = state = STATE_DONE; // Move to done state
+      Kobuki_Rotate_Angle_Setpoint(kobuki.angle,
+                                   90); // Rotate 90 degrees CW
+    } else if (175 <= bollard_distance && bollard_distance <= 225) {
+      layout = LAYOUT_B;
+      layout_detected = 1; // Set flag to indicate layout B detected
+      Kobuki_Rotate_Angle_Setpoint(kobuki.angle,
+                                   270); // Rotate 90 degrees CCW
+      state = STATE_DONE;                // Move to done state
+    } else {
+    }
+    return 0;
+    break;
+  case STATE_DONE:
+    // The next time the Layout_Detect function enters here,
+    // The layout detection should be complete. Return 1.
+    // Return to init state in case need to use again
+    state = STATE_INIT;
+    return 1;
+    break;
+  default:
+    return 0;
+  }
+}
+
 // Function to stop the Kobuki robot by stopping both driving and rotation.
 void Kobuki_stop() {
   Kobuki_Drive(STOP);
@@ -163,10 +206,18 @@ int main(void) {
     // Update Kobuki Values
     Kobuki_Read(&kobuki);
     Kobuki_Update_LEDs(led_1, led_2);
+    ultrasonic_read = Ultrasonic_Read() + ULTRASONIC_CALIBRATION;
 
-    // Immediately set to state idle if button 1 or wheel drop.
-    if (kobuki.button == BUTTON_1_STOP || kobuki.wheeldrop) {
+    //Immediately set to state idle if button 1 or wheel drop. Add wheel drop
+    if (kobuki.button == BUTTON_1_STOP) {
       current_state = IDLE;
+    }
+    
+    
+
+    if (kobuki.button == BUTTON_2_ROTATE) {
+      current_state = ORIENT;
+      
     }
 
     // FSM
@@ -222,16 +273,12 @@ int main(void) {
       // distance from the ultrasonic sensor and determine the layout based on
       // the distance. It will set the layout variable to LAYOUT_A or LAYOUT_B
       // and set the layout_detected flag to 1 if a valid layout is detected.
-      Layout_Detect();
-      if (layout_detected) {
-        if (layout == LAYOUT_A) {
-          Kobuki_Rotate_Angle_Setpoint(kobuki.angle,
-                                       -90); // Rotate 90 degrees CCW
-        } else if (layout == LAYOUT_B) {
-          Kobuki_Rotate_Angle_Setpoint(kobuki.angle,
-                                       90); // Rotate 90 degrees CW
-        }
-        current_state = PATHFIND;
+
+      int volatile ret2 = Layout_Detect();
+      if (ret2 == 0) {
+        Kobuki_Rotate_Angle(kobuki.angle); // Rotate to get a better reading
+      } else if (ret2 == 1) {
+        current_state = IDLE; // Move to pathfind state if layout detection is complete
       }
 
       break;
@@ -245,21 +292,23 @@ int main(void) {
       // Drive again
       // Reached section 3
 
-      //Vatsal -> Pathfinding logic for each layout
-      if (layout == LAYOUT_A){
+      // Vatsal -> Pathfinding logic for each layout
+      if (layout == LAYOUT_A) {
         Kobuki_Drive_Distance_Setpoint(kobuki.distance, 1500); // Drive 1.5 m
-        //indicate driving is done somehow
-        Kobuki_Rotate_Angle_Setpoint(kobuki.angle, -90); // Rotate 90 degrees CCW
-        //indicate rotation is done
+        // indicate driving is done somehow
+        Kobuki_Rotate_Angle_Setpoint(kobuki.angle,
+                                     -90); // Rotate 90 degrees CCW
+        // indicate rotation is done
         Kobuki_Drive_Distance_Setpoint(kobuki.distance, 1500); // Drive 1.5 m
-        //Start to align with bollards
-      } else if (layout == LAYOUT_B){
+        // Start to align with bollards
+      } else if (layout == LAYOUT_B) {
         Kobuki_Drive_Distance_Setpoint(kobuki.distance, 1500); // Drive 1.5 m
-        //indicate driving is done somehow
-        Kobuki_Rotate_Angle_Setpoint(kobuki.angle, 90); // Rotate 90 degrees CW
-        //indicate rotation is done
+        // indicate driving is done somehow
+        Kobuki_Rotate_Angle_Setpoint(kobuki.angle,
+                                     90); // Rotate 90 degrees CW
+        // indicate rotation is done
         Kobuki_Drive_Distance_Setpoint(kobuki.distance, 1500); // Drive 1.5 m
-        //Start to align with bollards
+        // Start to align with bollards
       } else {
         // No valid layout detected, return to IDLE state
         current_state = IDLE;
