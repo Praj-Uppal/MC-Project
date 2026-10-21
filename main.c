@@ -208,7 +208,7 @@ int main(void) {
     ultrasonic_read = Ultrasonic_Read() + ULTRASONIC_CALIBRATION;
 
     //Immediately set to state idle if button 1 or wheel drop. Add wheel drop
-    if (kobuki.button == BUTTON_1_STOP) {
+    if (kobuki.button == BUTTON_1_STOP || kobuki.wheel_drop) {
       current_state = IDLE;
     }
     
