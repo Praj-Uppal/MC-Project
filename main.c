@@ -147,14 +147,14 @@ int Layout_Detect(void) {
     return 0;
   } // Only read distance if rotation is complete
 
-  bollard_distance = Ultrasonic_Read() + ULTRASONIC_CALIBRATION;
+  bollard_distance = Ultrasonic_Read() + TOTAL_CALIBRATION; // Read distance and apply calibration
   volatile static AAstate state = STATE_INIT;
   switch (state) {
   case STATE_INIT:
     // Check if the distance is within the range for layout A or B
     if (325 <= bollard_distance && bollard_distance <= 375) {
       layout = LAYOUT_A;
-      state = state = STATE_DONE; // Move to done state
+      state = STATE_DONE; // Move to done state
       Kobuki_Rotate_Angle_Setpoint(kobuki.angle,
                                    90); // Rotate 90 degrees CW
     } else if (175 <= bollard_distance && bollard_distance <= 225) {
@@ -163,7 +163,6 @@ int Layout_Detect(void) {
       Kobuki_Rotate_Angle_Setpoint(kobuki.angle,
                                    270); // Rotate 90 degrees CCW
       state = STATE_DONE;                // Move to done state
-    } else {
     }
     return 0;
     break;
@@ -191,8 +190,8 @@ void Kobuki_stop() {
 int main(void) {
 
   // Both of these only for testing purposes . Not required
-  volatile uint16_t ultrasonic_read;
-  volatile uint16_t adc_read;
+  volatile int16_t ultrasonic_read;
+  volatile int16_t adc_read;
   US_Typedef object;
   Kobuki_LED_Enum led_1, led_2;
   UART_Init();
@@ -239,12 +238,7 @@ int main(void) {
         current_state = ORIENT;       // Set to ORIENT state
         // Check current ultrasonic reading
         ultrasonic_read = Ultrasonic_Read() + ULTRASONIC_CALIBRATION;
-        // based on distance select layout A or layout B.
-        if (325 <= ultrasonic_read && ultrasonic_read <= 375) {
-          layout = LAYOUT_A;
-        } else if (175 <= ultrasonic_read && ultrasonic_read <= 225) {
-          layout = LAYOUT_B;
-        }
+  
       } else { // if alignment incomplete
         // Rotate angle, and repeat.
         Kobuki_Rotate_Angle(kobuki.angle);
