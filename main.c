@@ -50,8 +50,8 @@ typedef enum {
 
 /*******Functions**********/
 
-void Kobuki_Rotate_AbsAngleTickBased(int16_t current_angle_tick,
-                                     int16_t target_angle_tick) {
+void Kobuki_Rotate_AbsAngleTickBased(int32_t current_angle_tick,
+                                     int32_t target_angle_tick) {
   // Calculate the relative difference in ticks. This would give us the amount
   // of ticks to rotate by to get to target angle.
   int32_t relative_ticks =
@@ -70,7 +70,7 @@ bool align(int16_t distanceThresh) {
   // variable to track alignment state.
   volatile static AAstate state = STATE_INIT;
   // Variables for thetaleft, thetaright, and average theta(theta)
-  volatile static int16_t thetaLeft, thetaRight, theta;
+  volatile static int32_t thetaLeft, thetaRight, theta;
 
   // If in the middle of a rotation, return 0 to process rotation.
   if (!kobuki.rotation_complete) {
@@ -78,7 +78,7 @@ bool align(int16_t distanceThresh) {
   }
 
   // ultrasonic reading
-  volatile int16_t d = Ultrasonic_Read() + ULTRASONIC_CALIBRATION;
+  volatile int16_t d = Ultrasonic_Read() + TOTAL_CALIBRATION;
   switch (state) {
   // initial state
   case STATE_INIT:
@@ -99,13 +99,13 @@ bool align(int16_t distanceThresh) {
       thetaLeft = kobuki.angle;
       state = STATE_RIGHT;
     } else { // Else continue sweep in 5 degree increments.
-      Kobuki_Rotate_Angle_Setpoint(kobuki.angle, 5);
+      Kobuki_Rotate_Angle_Setpoint(kobuki.angle, 1);
     }
     break;
   case STATE_RIGHT:
     // If object is detected, continue sweeping in 5 degree increments
     if (d <= distanceThresh) {
-      Kobuki_Rotate_Angle_Setpoint(kobuki.angle, 5);
+      Kobuki_Rotate_Angle_Setpoint(kobuki.angle, 1);
     } else { // Once object out of LOS, record the angle, and set to
              // alignment state.
       thetaRight = kobuki.angle;
@@ -233,9 +233,9 @@ int main(void) {
       break;
 
     case SEARCH:                      // Aligns with blocking bollard
-      bool volatile ret = align(500); // Align FSM subroutine
+      bool volatile ret = align(300); // Align FSM subroutine
       if (ret == 1) {                 // If alignment finished
-        current_state = ORIENT;       // Set to ORIENT state
+        current_state = IDLE;       // Set to ORIENT state
         // Check current ultrasonic reading
         ultrasonic_read = Ultrasonic_Read() + ULTRASONIC_CALIBRATION;
   
@@ -243,12 +243,6 @@ int main(void) {
         // Rotate angle, and repeat.
         Kobuki_Rotate_Angle(kobuki.angle);
       }
-
-      // VATSAL COMMENT: Does the above code conflit with the orient state? I
-      // think the above code should be in the orient state. The orient state
-      // should be responsible for determining the layout and rotating to the
-      // correct orientation. The search state should only be responsible for
-      // aligning with the bollard.
 
       break;
 
@@ -277,47 +271,47 @@ int main(void) {
 
       break;
 
-    case PATHFIND:
-      // Hardcode path for the current layout
-      // Drive Xm.
-      // We need to indicate this is finished.
-      // If (distance_complete) -> step 2 update a counter
-      // angle rotate -> if (angle_complete)- > step 3
-      // Drive again
-      // Reached section 3
+    // case PATHFIND:
+    //   // Hardcode path for the current layout
+    //   // Drive Xm.
+    //   // We need to indicate this is finished.
+    //   // If (distance_complete) -> step 2 update a counter
+    //   // angle rotate -> if (angle_complete)- > step 3
+    //   // Drive again
+    //   // Reached section 3
 
-      // Vatsal -> Pathfinding logic for each layout
-      if (layout == LAYOUT_A) {
-        Kobuki_Drive_Distance_Setpoint(kobuki.distance, 1500); // Drive 1.5 m
-        // indicate driving is done somehow
-        Kobuki_Rotate_Angle_Setpoint(kobuki.angle,
-                                     -90); // Rotate 90 degrees CCW
-        // indicate rotation is done
-        Kobuki_Drive_Distance_Setpoint(kobuki.distance, 1500); // Drive 1.5 m
-        // Start to align with bollards
-      } else if (layout == LAYOUT_B) {
-        Kobuki_Drive_Distance_Setpoint(kobuki.distance, 1500); // Drive 1.5 m
-        // indicate driving is done somehow
-        Kobuki_Rotate_Angle_Setpoint(kobuki.angle,
-                                     90); // Rotate 90 degrees CW
-        // indicate rotation is done
-        Kobuki_Drive_Distance_Setpoint(kobuki.distance, 1500); // Drive 1.5 m
-        // Start to align with bollards
-      } else {
-        // No valid layout detected, return to IDLE state
-        current_state = IDLE;
-      }
-      break;
+    //   // Vatsal -> Pathfinding logic for each layout
+    //   if (layout == LAYOUT_A) {
+    //     Kobuki_Drive_Distance_Setpoint(kobuki.distance, 1500); // Drive 1.5 m
+    //     // indicate driving is done somehow
+    //     Kobuki_Rotate_Angle_Setpoint(kobuki.angle,
+    //                                  -90); // Rotate 90 degrees CCW
+    //     // indicate rotation is done
+    //     Kobuki_Drive_Distance_Setpoint(kobuki.distance, 1500); // Drive 1.5 m
+    //     // Start to align with bollards
+    //   } else if (layout == LAYOUT_B) {
+    //     Kobuki_Drive_Distance_Setpoint(kobuki.distance, 1500); // Drive 1.5 m
+    //     // indicate driving is done somehow
+    //     Kobuki_Rotate_Angle_Setpoint(kobuki.angle,
+    //                                  90); // Rotate 90 degrees CW
+    //     // indicate rotation is done
+    //     Kobuki_Drive_Distance_Setpoint(kobuki.distance, 1500); // Drive 1.5 m
+    //     // Start to align with bollards
+    //   } else {
+    //     // No valid layout detected, return to IDLE state
+    //     current_state = IDLE;
+    //   }
+    //   break;
 
-    case DEPOSIT:
-      break;
+    // case DEPOSIT:
+    //   break;
 
-    case STORAGE:
-      break;
+    // case STORAGE:
+    //   break;
 
-    default:
-      current_state = IDLE;
-      break;
+    // default:
+    //   current_state = IDLE;
+    //   break;
     }
   }
 }

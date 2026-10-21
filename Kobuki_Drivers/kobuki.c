@@ -133,7 +133,7 @@ void Kobuki_Update_LEDs(Kobuki_LED_Enum led_1_colour,
   Kobuki_Tx(payload, sizeof(payload));
 }
 
-void Kobuki_Drive(uint16_t speed) {
+void Kobuki_Drive(int16_t speed) {
   uint8_t speed_lsb = 0;
   uint8_t speed_msb = 0;
   // Construct payload
@@ -151,7 +151,7 @@ void Kobuki_Drive(uint16_t speed) {
   Kobuki_Tx(payload, sizeof(payload));
 }
 
-void Kobuki_Rotate(uint16_t speed) {
+void Kobuki_Rotate(int16_t speed) {
   uint8_t speed_lsb = 0;
   uint8_t speed_msb = 0;
   // Construct payload

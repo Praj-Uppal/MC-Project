@@ -52,8 +52,8 @@ void Kobuki_Read(Kobuki_Typedef *kobuki);
 // Truncate speed
 #define SPEED_LIMIT (int16_t)150 // mm / s
 // Kobuki drive forward / backward (+ ve is forward )
-void Kobuki_Drive(uint16_t speed);
+void Kobuki_Drive(int16_t speed);
 // Kobuki rotate CW / CCW (+ ve is CCW )
-void Kobuki_Rotate(uint16_t speed);
+void Kobuki_Rotate(int16_t speed);
 
 #endif
