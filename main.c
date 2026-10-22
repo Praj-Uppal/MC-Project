@@ -23,6 +23,9 @@
 #define TOTAL_CALIBRATION                                                      \
   (ULTRASONIC_CALIBRATION - FRONT_LENGTH) // Total calibration value
 
+#define ALIGN_SWEEP_SPEED                                                      \
+  ((int16_t)60) // mm/s wheel speed during the alignment sweep (+ = CCW)
+
 //*******Enums**********/
 typedef enum {
   LAYOUT_A,
@@ -39,12 +42,12 @@ typedef enum {
 } State; // Enum to represent the different states of the robot
 
 typedef enum {
-  STATE_INIT,
-  STATE_LEFT,
-  STATE_RIGHT,
-  STATE_ALIGNING,
-  STATE_DONE
-} AAstate; // Enum to represent the alignment states
+  ALIGN_INIT,
+  ALIGN_LEFT,
+  ALIGN_RIGHT,
+  ALIGN_ALIGNING,
+  ALIGN_DONE
+} ALIGNstate; // Enum to represent the alignment states
 
 typedef enum {
   ORIENT_INIT,
@@ -56,20 +59,20 @@ typedef enum {
   STAGE_ROTATE1,
   STAGE_FORWARD2,
   STAGE_DONE
-} pfstate; // Enum to represent the pathfinding states
+} PFstate; // Enum to represent the pathfinding states
 
 typedef enum {
   STORAGE_ALIGN,
   STORAGE_ORIENT,
   STORAGE_FORWARD,
   STORAGE_DONE
-} storageState; // Enum to represent the storage states
+} STORAGEstate; // Enum to represent the storage states
 
 typedef enum {
   DEPOSIT_ALIGN,
   DEPOSIT_FORWARD,
   DEPOSIT_DONE
-} depositState; // Enum to represent the deposit states
+} DEPOSITstate; // Enum to represent the deposit states
 
 ///*******Global Variables**********/
 
@@ -79,12 +82,20 @@ volatile float debug_right_deg;
 volatile float debug_theta_deg;
 volatile int16_t debug_d;
 volatile int32_t debug_span;
-volatile AAstate debug_state;
+volatile ALIGNstate debug_state;
 volatile int32_t debug_distance;
 
 volatile LayoutState layout; // Variable to store the current layout state
 
 volatile Kobuki_Typedef kobuki; // Kobuki is global as used in many functions.
+
+// FSM state variables (file scope so reset_all_fsms() can reach them)
+static volatile ALIGNstate align_state = ALIGN_INIT;
+static volatile ORIENTstate orient_state = ORIENT_INIT; // used by Layout_Detect
+static volatile PFstate pathfind_state =
+    STAGE_FORWARD1; // shared by layout A and B
+static volatile STORAGEstate storage_state = STORAGE_ALIGN;
+static volatile DEPOSITstate deposit_state = DEPOSIT_ALIGN;
 
 //*******Functions**********/
 
@@ -113,21 +124,11 @@ void Kobuki_Rotate_AbsAngleTickBased(int32_t current_angle_tick,
   Kobuki_Rotate_Angle_Setpoint(current_angle_tick, relative_angle_deg);
 }
 
-// Function to stop the Kobuki robot by stopping both driving and rotation.
-void Kobuki_stop(void) {
-  Kobuki_Drive(STOP);
-  Kobuki_Rotate(STOP);
-  kobuki.rotation_complete = 1;
-  kobuki.distance_complete = 1;
-}
-
 // PRAJ -> Alignment function to align with the bollard. Returns 1 if alignment
 // is complete, 0 if still in process.
 
 bool align(int16_t distanceThresh) {
 
-  // variable to track alignment state.
-  static volatile AAstate state = STATE_INIT;
   // Variables for thetaleft, thetaright, and average theta(theta)
   static volatile int32_t thetaLeft, thetaRight, theta;
 
@@ -141,13 +142,13 @@ bool align(int16_t distanceThresh) {
   debug_d = d;
   d += TOTAL_CALIBRATION; // Add calibration to the ultrasonic reading
   debug_distance = d;
-  debug_state = state;
+  debug_state = align_state;
   debug_left_deg = thetaLeft * DEG_PER_TICK;
   debug_right_deg = thetaRight * DEG_PER_TICK;
 
-  switch (state) {
+  switch (align_state) {
   // initial state
-  case STATE_INIT:
+  case ALIGN_INIT:
     // If an object detected initially, rotate to get it out of LOS
     // Once rotated out of los, enter search state
     // This is to ensure an accurate theta alignment value.
@@ -155,30 +156,51 @@ bool align(int16_t distanceThresh) {
       // Rotate 45 degrees to get the object out of LOS
       Kobuki_Rotate_Angle_Setpoint(kobuki.angle, 45);
     }
-    state = STATE_LEFT;
+    align_state = ALIGN_LEFT;
     break;
     break;
-    // State for getting theta left
-  case STATE_LEFT:
-    // if detected an edge, record and enter theta right detection state
+
+    // vatsal -> the ALIGN_LEFT and ALIGN_RIGHT was chnaged by me, apparently
+    // this will perfrom better than the previous implementation. The previous
+    // implementation was commented out below.
+  case ALIGN_LEFT:
     if (d <= distanceThresh) {
       thetaLeft = kobuki.angle;
-      state = STATE_RIGHT;
-    } else { // Else continue sweep in 5 degree increments.
-      Kobuki_Rotate_Angle_Setpoint(kobuki.angle, 1);
-    }
+      align_state = ALIGN_RIGHT;
+    } else
+      Kobuki_Rotate(SEARCH_SPEED); // keep turning
     break;
-  case STATE_RIGHT:
-    // If object is detected, continue sweeping in 5 degree increments
-    if (d <= distanceThresh) {
-      Kobuki_Rotate_Angle_Setpoint(kobuki.angle, 1);
-    } else { // Once object out of LOS, record the angle, and set to
-      // alignment state.
+  case ALIGN_RIGHT:
+    if (d <= distanceThresh)
+      Kobuki_Rotate(SEARCH_SPEED);
+    else {
       thetaRight = kobuki.angle;
-      state = STATE_ALIGNING;
+      Kobuki_Rotate(STOP);
+      align_state = ALIGN_ALIGNING;
     }
     break;
-  case STATE_ALIGNING:
+
+    // State for getting theta left
+    // case ALIGN_LEFT:
+    //   // if detected an edge, record and enter theta right detection state
+    //   if (d <= distanceThresh) {
+    //     thetaLeft = kobuki.angle;
+    //     align_state = ALIGN_RIGHT;
+    //   } else { // Else continue sweep in 5 degree increments.
+    //     Kobuki_Rotate_Angle_Setpoint(kobuki.angle, 1);
+    //   }
+    //   break;
+    // case ALIGN_RIGHT:
+    //   // If object is detected, continue sweeping in 5 degree increments
+    //   if (d <= distanceThresh) {
+    //     Kobuki_Rotate_Angle_Setpoint(kobuki.angle, 1);
+    //   } else { // Once object out of LOS, record the angle, and set to
+    //     // alignment state.
+    //     thetaRight = kobuki.angle;
+    //     align_state = ALIGN_ALIGNING;
+    //   }
+    break;
+  case ALIGN_ALIGNING:
     // Determine the theta average to go to.
     // The angles currently are measured in the rotary encoder ticks.
     // so from [-18000,18000] for [0,360]. Should not affect maths, and
@@ -193,13 +215,13 @@ bool align(int16_t distanceThresh) {
     // Process based on the rotary encoder ticks
     Kobuki_Rotate_AbsAngleTickBased(kobuki.angle, theta);
     // once set, enter state done.
-    state = STATE_DONE;
+    align_state = ALIGN_DONE;
     break;
-  case STATE_DONE:
+  case ALIGN_DONE:
     // The next time the align function enters here,
     // The alignment rotation should be complete. Return 1.
     // Return to init state in case need to use again
-    state = STATE_INIT;
+    align_state = ALIGN_INIT;
     return 1;
     break;
   default:
@@ -221,14 +243,13 @@ int Layout_Detect(void) {
 
   bollard_distance = Ultrasonic_Read() +
                      TOTAL_CALIBRATION; // Read distance and apply calibration
-  static volatile ORIENTstate state = ORIENT_INIT;
 
-  switch (state) {
+  switch (orient_state) {
   case ORIENT_INIT:
     // Check if the distance is within the range for layout A or B
     if (325 <= bollard_distance && bollard_distance <= 375) {
       layout = LAYOUT_A;
-      state = ORIENT_DONE; // Move to done state
+      orient_state = ORIENT_DONE; // Move to done state
       Kobuki_Rotate_Angle_Setpoint(kobuki.angle,
                                    90); // Rotate 90 degrees CW
     } else if (175 <= bollard_distance && bollard_distance <= 225) {
@@ -236,7 +257,7 @@ int Layout_Detect(void) {
       layout_detected = 1; // Set flag to indicate layout B detected
       Kobuki_Rotate_Angle_Setpoint(kobuki.angle,
                                    270); // Rotate 90 degrees CCW
-      state = ORIENT_DONE;               // Move to done state
+      orient_state = ORIENT_DONE;        // Move to done state
     }
     return 0;
     break;
@@ -244,7 +265,7 @@ int Layout_Detect(void) {
     // The next time the Layout_Detect function enters here,
     // The layout detection should be complete. Return 1.
     // Return to init state in case need to use again
-    state = ORIENT_INIT;
+    orient_state = ORIENT_INIT;
     return 1;
     break;
   default:
@@ -253,18 +274,17 @@ int Layout_Detect(void) {
 }
 
 bool orient(int16_t angle) {
-  static volatile ORIENTstate current_state = ORIENT_INIT;
   if (!kobuki.rotation_complete || !kobuki.distance_complete) {
     return 0;
   }
 
-  switch (current_state) {
+  switch (orient_state) {
   case ORIENT_INIT:
     Kobuki_Rotate_Angle_Setpoint(kobuki.angle, 180);
-    current_state = ORIENT_DONE;
+    orient_state = ORIENT_DONE;
     break;
   case ORIENT_DONE:
-    current_state = ORIENT_INIT;
+    orient_state = ORIENT_INIT;
     return 1;
     break;
   default:
@@ -275,29 +295,28 @@ bool orient(int16_t angle) {
 
 // PRAJ - Pathfinding FSM for Layout A
 bool layoutAFSM(void) {
-  static volatile pfstate current_state = STAGE_FORWARD1;
   if (!kobuki.distance_complete || !kobuki.rotation_complete) {
     return 0;
   }
 
-  switch (current_state) {
+  switch (pathfind_state) {
   case STAGE_FORWARD1:
     Kobuki_Drive_Distance_Setpoint(kobuki.distance, 1195);
-    current_state = STAGE_ROTATE1;
+    pathfind_state = STAGE_ROTATE1;
     return 0;
     break;
   case STAGE_ROTATE1:
     Kobuki_Rotate_Angle_Setpoint(kobuki.angle, 270);
-    current_state = STAGE_FORWARD2;
+    pathfind_state = STAGE_FORWARD2;
     return 0;
     break;
   case STAGE_FORWARD2:
     Kobuki_Drive_Distance_Setpoint(kobuki.distance, 1395);
-    current_state = STAGE_DONE;
+    pathfind_state = STAGE_DONE;
     return 0;
     break;
   case STAGE_DONE:
-    current_state = STAGE_FORWARD1;
+    pathfind_state = STAGE_FORWARD1;
     return 1;
     break;
   default:
@@ -308,29 +327,28 @@ bool layoutAFSM(void) {
 
 // PRAJ - Layout B FSM
 bool layoutBFSM(void) {
-  static volatile pfstate current_state = STAGE_FORWARD1;
   if (!kobuki.distance_complete || !kobuki.rotation_complete) {
     return 0;
   }
 
-  switch (current_state) {
+  switch (pathfind_state) {
   case STAGE_FORWARD1:
     Kobuki_Drive_Distance_Setpoint(kobuki.distance, 1395);
-    current_state = STAGE_ROTATE1;
+    pathfind_state = STAGE_ROTATE1;
     return 0;
     break;
   case STAGE_ROTATE1:
     Kobuki_Rotate_Angle_Setpoint(kobuki.angle, 270);
-    current_state = STAGE_FORWARD2;
+    pathfind_state = STAGE_FORWARD2;
     return 0;
     break;
   case STAGE_FORWARD2:
     Kobuki_Drive_Distance_Setpoint(kobuki.distance, 1195);
-    current_state = STAGE_DONE;
+    pathfind_state = STAGE_DONE;
     return 0;
     break;
   case STAGE_DONE:
-    current_state = STAGE_FORWARD1;
+    pathfind_state = STAGE_FORWARD1;
     return 1;
     break;
   default:
@@ -342,29 +360,28 @@ bool layoutBFSM(void) {
 // PRAJ - Storage FSM
 
 bool storageFSM(void) {
-  static volatile storageState current_state = STORAGE_ALIGN;
   if (!kobuki.distance_complete || !kobuki.rotation_complete) {
     return 0;
   }
 
-  switch (current_state) {
+  switch (storage_state) {
   case STORAGE_ALIGN:
     bool volatile ret = align(100); // Align FSM subroutine
-    
-    if (ret == 1) {                 // If alignment finished
-      current_state = STORAGE_ORIENT;
+
+    if (ret == 1) { // If alignment finished
+      storage_state = STORAGE_ORIENT;
     }
     break;
   case STORAGE_ORIENT:
     Kobuki_Rotate_Angle_Setpoint(kobuki.angle, 180);
-    current_state = STORAGE_FORWARD;
+    storage_state = STORAGE_FORWARD;
     break;
   case STORAGE_FORWARD:
     Kobuki_Drive_Distance_Setpoint(kobuki.distance, 918);
-    current_state = STORAGE_DONE;
+    storage_state = STORAGE_DONE;
     break;
   case STORAGE_DONE:
-    current_state = STORAGE_ALIGN;
+    storage_state = STORAGE_ALIGN;
     return 1;
     break;
   default:
@@ -376,17 +393,15 @@ bool storageFSM(void) {
 // PRAJ - Deposit FSM
 
 bool depositFSM(void) {
-
-  static volatile depositState current_state = DEPOSIT_ALIGN;
   if (!kobuki.distance_complete || !kobuki.rotation_complete) {
     return 0;
   }
 
-  switch (current_state) {
+  switch (deposit_state) {
   case DEPOSIT_ALIGN:
     bool volatile ret = align(100); // Align FSM subroutine
     if (ret == 1) {                 // If alignment finished
-      current_state = DEPOSIT_FORWARD;
+      deposit_state = DEPOSIT_FORWARD;
     }
     break;
   case DEPOSIT_FORWARD: {
@@ -395,17 +410,26 @@ bool depositFSM(void) {
     if (travelD > 0) {
       Kobuki_Drive_Distance_Setpoint(kobuki.distance, travelD);
     }
-    current_state = DEPOSIT_DONE;
+    deposit_state = DEPOSIT_DONE;
     break;
   }
   case DEPOSIT_DONE:
-    current_state = DEPOSIT_ALIGN;
+    deposit_state = DEPOSIT_ALIGN;
     return 1;
     break;
   default:
     break;
   }
   return 0;
+}
+
+void reset_all_fsms(void) {
+  // Reset all FSM states to their initial values
+  align_state = ALIGN_INIT;
+  orient_state = ORIENT_INIT;
+  pathfind_state = STAGE_FORWARD1;
+  storage_state = STORAGE_ALIGN;
+  deposit_state = DEPOSIT_ALIGN;
 }
 
 //********MAIN*******************/
@@ -432,10 +456,12 @@ int main(void) {
 
     // Immediately set to state idle if button 1 or wheel drop. Add wheel drop
     if (kobuki.button & BUTTON_1_STOP || kobuki.wheeldrop != 0) {
+      reset_all_fsms(); // Reset all FSMs to their initial states
       current_state = IDLE;
     }
 
     if (kobuki.button & BUTTON_2_ROTATE) {
+      reset_all_fsms(); // Reset all FSMs to their initial states
       current_state = ORIENT;
     }
 
@@ -445,8 +471,9 @@ int main(void) {
     case IDLE: // IDLE case
       // Stop and drive or rotation commands
       {
-        Kobuki_stop();
+        Kobuki_Stop();
         // Await search button press.
+        reset_all_fsms(); // Reset all FSMs to their initial states
         if (kobuki.button & BUTTON_0_START) {
           current_state = SEARCH; // Switch to search mode.
           led_1 = RED;            // Turn on red LED to indicate search mode.
@@ -461,7 +488,9 @@ int main(void) {
         led_1 = OFF; // Turn off red LED to indicate search mode is complete.
       } else {       // if alignment incomplete
         // Rotate angle, and repeat.
-        Kobuki_Rotate_Angle(kobuki.angle);
+        if (!kobuki.rotation_complete) {
+          Kobuki_Rotate_Angle(kobuki.angle);
+        }
       }
 
       break;
@@ -474,7 +503,9 @@ int main(void) {
 
       int volatile ret2 = Layout_Detect();
       if (ret2 == 0) {
-        Kobuki_Rotate_Angle(kobuki.angle); // Rotate to get a better reading
+        if (!kobuki.rotation_complete) {
+          Kobuki_Rotate_Angle(kobuki.angle); // Rotate to get a better reading
+        }
       } else if (ret2 == 1) {
         current_state =
             IDLE; // Move to ____ state if layout detection is complete

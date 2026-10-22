@@ -63,4 +63,7 @@ void Kobuki_Drive(int16_t speed);
 // Kobuki rotate CW / CCW (+ ve is CCW )
 void Kobuki_Rotate(int16_t speed);
 
+// Stop Kobuki drive and rotation
+void Kobuki_Stop(void);
+
 #endif
