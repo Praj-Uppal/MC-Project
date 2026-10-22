@@ -30,7 +30,7 @@ typedef struct
   int16_t angle;
   uint8_t rotation_complete;
   uint8_t distance_complete;
-} Kobuki_Typedef;
+} volatile Kobuki_Typedef;
 typedef enum uint8_t
 {
   OFF,

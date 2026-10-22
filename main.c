@@ -23,21 +23,6 @@
 #define TOTAL_CALIBRATION                                                      \
   (ULTRASONIC_CALIBRATION - FRONT_LENGTH) // Total calibration value
 
-///*******Global Variables**********/
-
-// for debugging purposes
-volatile float debug_left_deg;
-volatile float debug_right_deg;
-volatile float debug_theta_deg;
-volatile int16_t debug_d;
-volatile int32_t debug_span;
-volatile AAstate debug_state;
-volatile int32_t debug_distance;
-
-volatile LayoutState layout; // Variable to store the current layout state
-
-volatile Kobuki_Typedef kobuki; // Kobuki is global as used in many functions.
-
 //*******Enums**********/
 typedef enum {
   LAYOUT_A,
@@ -52,6 +37,54 @@ typedef enum {
   STORAGE,
   DEPOSIT
 } State; // Enum to represent the different states of the robot
+
+typedef enum {
+  STATE_INIT,
+  STATE_LEFT,
+  STATE_RIGHT,
+  STATE_ALIGNING,
+  STATE_DONE
+} AAstate; // Enum to represent the alignment states
+
+typedef enum {
+  ORIENT_INIT,
+  ORIENT_DONE
+} ORIENTstate; // Enum to represent the ORIENT states
+
+typedef enum {
+  STAGE_FORWARD1,
+  STAGE_ROTATE1,
+  STAGE_FORWARD2,
+  STAGE_DONE
+} pfstate; // Enum to represent the pathfinding states
+
+typedef enum {
+  STORAGE_ALIGN,
+  STORAGE_ORIENT,
+  STORAGE_FORWARD,
+  STORAGE_DONE
+} storageState; // Enum to represent the storage states
+
+typedef enum {
+  DEPOSIT_ALIGN,
+  DEPOSIT_FORWARD,
+  DEPOSIT_DONE
+} depositState; // Enum to represent the deposit states
+
+///*******Global Variables**********/
+
+// for debugging purposes
+volatile float debug_left_deg;
+volatile float debug_right_deg;
+volatile float debug_theta_deg;
+volatile int16_t debug_d;
+volatile int32_t debug_span;
+volatile AAstate debug_state;
+volatile int32_t debug_distance;
+
+volatile LayoutState layout; // Variable to store the current layout state
+
+volatile Kobuki_Typedef kobuki; // Kobuki is global as used in many functions.
 
 //*******Functions**********/
 
@@ -81,7 +114,7 @@ void Kobuki_Rotate_AbsAngleTickBased(int32_t current_angle_tick,
 }
 
 // Function to stop the Kobuki robot by stopping both driving and rotation.
-void Kobuki_stop() {
+void Kobuki_stop(void) {
   Kobuki_Drive(STOP);
   Kobuki_Rotate(STOP);
   kobuki.rotation_complete = 1;
@@ -90,14 +123,6 @@ void Kobuki_stop() {
 
 // PRAJ -> Alignment function to align with the bollard. Returns 1 if alignment
 // is complete, 0 if still in process.
-
-typedef enum {
-  STATE_INIT,
-  STATE_LEFT,
-  STATE_RIGHT,
-  STATE_ALIGNING,
-  STATE_DONE
-} AAstate; // Enum to represent the alignment states
 
 bool align(int16_t distanceThresh) {
 
@@ -185,11 +210,6 @@ bool align(int16_t distanceThresh) {
 
 // Vatsal - Orient Code
 
-typedef enum {
-  STATE_INIT,
-  STATE_DONE
-} ORIENTstate; // Enum to represent the ORIENT states
-
 uint16_t bollard_distance = 0; // Variable to store the distance to the bollard
 uint8_t layout_detected = 0;   // Flag to indicate if a bollard is detected
 
@@ -201,14 +221,14 @@ int Layout_Detect(void) {
 
   bollard_distance = Ultrasonic_Read() +
                      TOTAL_CALIBRATION; // Read distance and apply calibration
-  static volatile ORIENTstate state = STATE_INIT;
+  static volatile ORIENTstate state = ORIENT_INIT;
 
   switch (state) {
-  case STATE_INIT:
+  case ORIENT_INIT:
     // Check if the distance is within the range for layout A or B
     if (325 <= bollard_distance && bollard_distance <= 375) {
       layout = LAYOUT_A;
-      state = STATE_DONE; // Move to done state
+      state = ORIENT_DONE; // Move to done state
       Kobuki_Rotate_Angle_Setpoint(kobuki.angle,
                                    90); // Rotate 90 degrees CW
     } else if (175 <= bollard_distance && bollard_distance <= 225) {
@@ -216,15 +236,15 @@ int Layout_Detect(void) {
       layout_detected = 1; // Set flag to indicate layout B detected
       Kobuki_Rotate_Angle_Setpoint(kobuki.angle,
                                    270); // Rotate 90 degrees CCW
-      state = STATE_DONE;                // Move to done state
+      state = ORIENT_DONE;               // Move to done state
     }
     return 0;
     break;
-  case STATE_DONE:
+  case ORIENT_DONE:
     // The next time the Layout_Detect function enters here,
     // The layout detection should be complete. Return 1.
     // Return to init state in case need to use again
-    state = STATE_INIT;
+    state = ORIENT_INIT;
     return 1;
     break;
   default:
@@ -233,18 +253,18 @@ int Layout_Detect(void) {
 }
 
 bool orient(int16_t angle) {
-  static volatile ORIENTstate current_state = STATE_INIT;
+  static volatile ORIENTstate current_state = ORIENT_INIT;
   if (!kobuki.rotation_complete || !kobuki.distance_complete) {
     return 0;
   }
 
   switch (current_state) {
-  case STATE_INIT:
+  case ORIENT_INIT:
     Kobuki_Rotate_Angle_Setpoint(kobuki.angle, 180);
-    current_state = STATE_DONE;
+    current_state = ORIENT_DONE;
     break;
-  case STATE_DONE:
-    current_state = STATE_INIT;
+  case ORIENT_DONE:
+    current_state = ORIENT_INIT;
     return 1;
     break;
   default:
@@ -253,13 +273,7 @@ bool orient(int16_t angle) {
   return 0;
 }
 
-typedef enum {
-  STAGE_FORWARD1,
-  STAGE_ROTATE1,
-  STAGE_FORWARD2,
-  STAGE_DONE
-} pfstate;
-
+// PRAJ - Pathfinding FSM for Layout A
 bool layoutAFSM(void) {
   static volatile pfstate current_state = STAGE_FORWARD1;
   if (!kobuki.distance_complete || !kobuki.rotation_complete) {
@@ -291,6 +305,8 @@ bool layoutAFSM(void) {
     break;
   }
 }
+
+// PRAJ - Layout B FSM
 bool layoutBFSM(void) {
   static volatile pfstate current_state = STAGE_FORWARD1;
   if (!kobuki.distance_complete || !kobuki.rotation_complete) {
@@ -324,13 +340,8 @@ bool layoutBFSM(void) {
 }
 
 // PRAJ - Storage FSM
-typedef enum {
-  STORAGE_ALIGN,
-  STORAGE_ORIENT,
-  STORAGE_FORWARD,
-  STORAGE_DONE
-} storageState;
-bool storageFSM() {
+
+bool storageFSM(void) {
   static volatile storageState current_state = STORAGE_ALIGN;
   if (!kobuki.distance_complete || !kobuki.rotation_complete) {
     return 0;
@@ -339,6 +350,7 @@ bool storageFSM() {
   switch (current_state) {
   case STORAGE_ALIGN:
     bool volatile ret = align(100); // Align FSM subroutine
+    
     if (ret == 1) {                 // If alignment finished
       current_state = STORAGE_ORIENT;
     }
@@ -362,9 +374,8 @@ bool storageFSM() {
 }
 
 // PRAJ - Deposit FSM
-typedef enum { DEPOSIT_ALIGN, DEPOSIT_FORWARD, DEPOSIT_DONE } depositState;
 
-bool depositFSM() {
+bool depositFSM(void) {
 
   static volatile depositState current_state = DEPOSIT_ALIGN;
   if (!kobuki.distance_complete || !kobuki.rotation_complete) {
