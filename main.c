@@ -251,13 +251,17 @@ int Layout_Detect(void) {
       layout = LAYOUT_A;
       orient_state = ORIENT_DONE; // Move to done state
       Kobuki_Rotate_Angle_Setpoint(kobuki.angle,
-                                   90); // Rotate 90 degrees CW
+                                   90); // Rotate 90 degrees CCW
     } else if (175 <= bollard_distance && bollard_distance <= 225) {
       layout = LAYOUT_B;
       layout_detected = 1; // Set flag to indicate layout B detected
       Kobuki_Rotate_Angle_Setpoint(kobuki.angle,
-                                   270); // Rotate 90 degrees CCW
+                                   270); // Rotate 90 degrees CW
       orient_state = ORIENT_DONE;        // Move to done state
+    } else {
+      // If the distance is not within the range for either layout,
+      // rotate 3 degrees to get a better reading
+      Kobuki_Rotate_Angle_Setpoint(kobuki.angle, 3); // Rotate 3 degrees CCW
     }
     return 0;
     break;
