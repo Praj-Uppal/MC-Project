@@ -1,4 +1,3 @@
-
 /*******Headers**********/
 
 #include "ADC/adc.h"
@@ -23,16 +22,28 @@
 #define FRONT_LENGTH 245          // Length of the front of the robot
 #define TOTAL_CALIBRATION                                                      \
   (ULTRASONIC_CALIBRATION - FRONT_LENGTH) // Total calibration value
-bool buttonFlag = 0,
-     storageFlag = 0; // Flag to indicate if button 2 has been pressed
+
+///*******Global Variables**********/
+
+// for debugging purposes
+volatile float debug_left_deg;
+volatile float debug_right_deg;
+volatile float debug_theta_deg;
+volatile int16_t debug_d;
+volatile int32_t debug_span;
+volatile AAstate debug_state;
+volatile int32_t debug_distance;
+
+volatile LayoutState layout; // Variable to store the current layout state
+
+volatile Kobuki_Typedef kobuki; // Kobuki is global as used in many functions.
+
+//*******Enums**********/
 typedef enum {
   LAYOUT_A,
   LAYOUT_B
 } LayoutState; // Enum to represent the layout state (A or B)
 
-volatile LayoutState layout; // Variable to store the current layout state
-
-volatile Kobuki_Typedef kobuki; // Kobuki is global as used in many functions.
 typedef enum {
   IDLE,
   SEARCH,
@@ -42,23 +53,7 @@ typedef enum {
   DEPOSIT
 } State; // Enum to represent the different states of the robot
 
-typedef enum {
-  STATE_INIT,
-  STATE_LEFT,
-  STATE_RIGHT,
-  STATE_ALIGNING,
-  STATE_DONE
-} AAstate; // Enum to represent the alignment states
-
-/*******Functions**********/
-
-volatile float debug_left_deg;
-volatile float debug_right_deg;
-volatile float debug_theta_deg;
-volatile int16_t debug_d;
-volatile int32_t debug_span;
-volatile AAstate debug_state;
-volatile int32_t debug_distance;
+//*******Functions**********/
 
 // Function to wrap an angle in ticks to the range [-18000, 18000].
 int32_t wrap(int32_t angle) {
@@ -71,6 +66,7 @@ int32_t wrap(int32_t angle) {
   return angle;
 }
 
+// Function to rotate the robot to an absolute angle in ticks.
 void Kobuki_Rotate_AbsAngleTickBased(int32_t current_angle_tick,
                                      int32_t target_angle_tick) {
   // Calculate the relative difference in ticks. This would give us the amount
@@ -84,8 +80,25 @@ void Kobuki_Rotate_AbsAngleTickBased(int32_t current_angle_tick,
   Kobuki_Rotate_Angle_Setpoint(current_angle_tick, relative_angle_deg);
 }
 
+// Function to stop the Kobuki robot by stopping both driving and rotation.
+void Kobuki_stop() {
+  Kobuki_Drive(STOP);
+  Kobuki_Rotate(STOP);
+  kobuki.rotation_complete = 1;
+  kobuki.distance_complete = 1;
+}
+
 // PRAJ -> Alignment function to align with the bollard. Returns 1 if alignment
 // is complete, 0 if still in process.
+
+typedef enum {
+  STATE_INIT,
+  STATE_LEFT,
+  STATE_RIGHT,
+  STATE_ALIGNING,
+  STATE_DONE
+} AAstate; // Enum to represent the alignment states
+
 bool align(int16_t distanceThresh) {
 
   // variable to track alignment state.
@@ -171,6 +184,12 @@ bool align(int16_t distanceThresh) {
 }
 
 // Vatsal - Orient Code
+
+typedef enum {
+  STATE_INIT,
+  STATE_DONE
+} ORIENTstate; // Enum to represent the ORIENT states
+
 uint16_t bollard_distance = 0; // Variable to store the distance to the bollard
 uint8_t layout_detected = 0;   // Flag to indicate if a bollard is detected
 
@@ -182,23 +201,23 @@ int Layout_Detect(void) {
 
   bollard_distance = Ultrasonic_Read() +
                      TOTAL_CALIBRATION; // Read distance and apply calibration
-  static volatile AAstate state = STATE_INIT;
+  static volatile ORIENTstate state = STATE_INIT;
 
   switch (state) {
   case STATE_INIT:
     // Check if the distance is within the range for layout A or B
-      if (325 <= bollard_distance && bollard_distance <= 375) {
-        layout = LAYOUT_A;
-        state = STATE_DONE; // Move to done state
-        Kobuki_Rotate_Angle_Setpoint(kobuki.angle,
-                                     90); // Rotate 90 degrees CW
-      } else if (175 <= bollard_distance && bollard_distance <= 225) {
-        layout = LAYOUT_B;
-        layout_detected = 1; // Set flag to indicate layout B detected
-        Kobuki_Rotate_Angle_Setpoint(kobuki.angle,
-                                     270); // Rotate 90 degrees CCW
-        state = STATE_DONE;                // Move to done state
-      }
+    if (325 <= bollard_distance && bollard_distance <= 375) {
+      layout = LAYOUT_A;
+      state = STATE_DONE; // Move to done state
+      Kobuki_Rotate_Angle_Setpoint(kobuki.angle,
+                                   90); // Rotate 90 degrees CW
+    } else if (175 <= bollard_distance && bollard_distance <= 225) {
+      layout = LAYOUT_B;
+      layout_detected = 1; // Set flag to indicate layout B detected
+      Kobuki_Rotate_Angle_Setpoint(kobuki.angle,
+                                   270); // Rotate 90 degrees CCW
+      state = STATE_DONE;                // Move to done state
+    }
     return 0;
     break;
   case STATE_DONE:
@@ -214,7 +233,7 @@ int Layout_Detect(void) {
 }
 
 bool orient(int16_t angle) {
-  static volatile AAstate current_state = STATE_INIT;
+  static volatile ORIENTstate current_state = STATE_INIT;
   if (!kobuki.rotation_complete || !kobuki.distance_complete) {
     return 0;
   }
@@ -232,14 +251,6 @@ bool orient(int16_t angle) {
     break;
   }
   return 0;
-}
-
-// Function to stop the Kobuki robot by stopping both driving and rotation.
-void Kobuki_stop() {
-  Kobuki_Drive(STOP);
-  Kobuki_Rotate(STOP);
-  kobuki.rotation_complete = 1;
-  kobuki.distance_complete = 1;
 }
 
 typedef enum {
@@ -312,6 +323,7 @@ bool layoutBFSM(void) {
   }
 }
 
+// PRAJ - Storage FSM
 typedef enum {
   STORAGE_ALIGN,
   STORAGE_ORIENT,
@@ -349,6 +361,7 @@ bool storageFSM() {
   return 0;
 }
 
+// PRAJ - Deposit FSM
 typedef enum { DEPOSIT_ALIGN, DEPOSIT_FORWARD, DEPOSIT_DONE } depositState;
 
 bool depositFSM() {
@@ -384,6 +397,7 @@ bool depositFSM() {
   return 0;
 }
 
+//********MAIN*******************/
 // Main function to initialize the robot and run the main loop.
 int main(void) {
 
@@ -442,16 +456,6 @@ int main(void) {
       break;
     }
     case ORIENT: {
-      // Measure Distance to the bollard
-      // Based of distance detect layout
-      //  if (325 + calibration <distance < 375 + calibration) layout A. else
-      //  if (...) layout B
-      // based on which layout
-      // Rotate 90 CCW or CW
-      // Based on layout A or B
-      // Orient to correct path. orientation is complete
-      // and then enter pathfind
-
       // Vatsal -> Layout Detecttion Function. This function will read the
       // distance from the ultrasonic sensor and determine the layout based on
       // the distance. It will set the layout variable to LAYOUT_A or LAYOUT_B
