@@ -20,8 +20,7 @@ static uint8_t rotation_complete = 0;
 static uint8_t distance_complete = 0;
 
 // Updated Kobuki_Read () remember to replace the old wrapper
-void Kobuki_Read(Kobuki_Typedef *kobuki)
-{
+void Kobuki_Read(Kobuki_Typedef *kobuki) {
   uint16_t distance_LSB;
   uint16_t distance_MSB;
   int16_t angle_LSB;
@@ -32,8 +31,7 @@ void Kobuki_Read(Kobuki_Typedef *kobuki)
   // Read kobuki Tx data stream
   checksum_result = Kobuki_Rx(kobuki_rx_buffer, SIZE_FEEDBACK);
   // If checksum ’checks out ’, update sensor variables from buffer
-  if (checksum_result == 0)
-  {
+  if (checksum_result == 0) {
     distance_LSB = kobuki_rx_buffer[DIST_LSB];
     angle_LSB = kobuki_rx_buffer[ANGLE_LSB];
     distance_MSB = (uint16_t)((uint16_t)kobuki_rx_buffer[DIST_MSB] << 8);
@@ -47,8 +45,7 @@ void Kobuki_Read(Kobuki_Typedef *kobuki)
     kobuki->angle = angle_LSB | angle_MSB;
   }
   // otherwise do not update
-  else
-  {
+  else {
   }
   // always update complete flags
   kobuki->rotation_complete = rotation_complete;
@@ -56,8 +53,7 @@ void Kobuki_Read(Kobuki_Typedef *kobuki)
 }
 
 void Kobuki_Rotate_Angle_Setpoint(int16_t current_angle_tick,
-                                  int16_t rot_angle_deg)
-{
+                                  int16_t rot_angle_deg) {
   volatile int32_t init_angle;
   rotation_complete = 0;
   // initial angle
@@ -66,8 +62,7 @@ void Kobuki_Rotate_Angle_Setpoint(int16_t current_angle_tick,
   // setpoint angle
   setpoint_angle_deg = (init_angle + rot_angle_deg + 360) % 360; // [0 -360]
 }
-void Kobuki_Rotate_Angle(int16_t current_angle_tick)
-{
+void Kobuki_Rotate_Angle(int16_t current_angle_tick) {
   volatile int16_t speed;
   volatile int16_t error;
   volatile int32_t current_angle_deg;
@@ -75,42 +70,33 @@ void Kobuki_Rotate_Angle(int16_t current_angle_tick)
       (int32_t)((double)(current_angle_tick + (int32_t)18000) * DEG_PER_TICK);
   error = (int16_t)(setpoint_angle_deg - current_angle_deg);
   // Check for non - optimal rotation angle
-  if (abs(error) > 180)
-  {
+  if (abs(error) > 180) {
     // Always rotate with the minimum angle e.g. +270 -> -90.
     // Introduces singularity - loses sign and truncates error.
     error = -sign(error) * (abs(error) % 180);
     // Special cases in circular buffer . Offset to correct error.
-    if ((error < 0) && (current_angle_deg < setpoint_angle_deg))
-    {
+    if ((error < 0) && (current_angle_deg < setpoint_angle_deg)) {
       error = -(error + 180);
-    }
-    else if ((error > 0) && (current_angle_deg > setpoint_angle_deg))
-    {
+    } else if ((error > 0) && (current_angle_deg > setpoint_angle_deg)) {
       error = -(error - 180);
       // Does this make sense ? Is there a simpler way?
     }
   }
-  if (abs(error) <= 1)
-  {
+  if (abs(error) <= 1) {
     rotation_complete = 1;
-  }
-  else
-  {
+  } else {
     speed = (sign(error) * MIN_SPEED) + (int16_t)(GAIN_ROTATE * error);
     Kobuki_Rotate(speed);
   }
 }
 
 void Kobuki_Drive_Distance_Setpoint(uint16_t current_distance_tick,
-                                    int16_t distance)
-{
+                                    int16_t distance) {
   distance_complete = 0;
   setpoint_distance_tick =
       current_distance_tick + (int32_t)(distance / MM_PER_TICK);
 }
-void Kobuki_Drive_Distance(uint16_t current_distance_tick)
-{
+void Kobuki_Drive_Distance(uint16_t current_distance_tick) {
   volatile int16_t speed;
   volatile int16_t error;
   volatile uint16_t setpoint_alias;
@@ -121,19 +107,15 @@ void Kobuki_Drive_Distance(uint16_t current_distance_tick)
   if (((setpoint_distance_tick > 0xFFFF) &&
        (current_distance_tick < setpoint_alias)) ||
       ((setpoint_distance_tick < 0) &&
-       (current_distance_tick > setpoint_alias)))
-  {
+       (current_distance_tick > setpoint_alias))) {
     // alternate condition
     error = (int16_t)((double)(setpoint_alias - current_distance_tick) *
                       MM_PER_TICK);
   }
-  if (abs(error) <= 1)
-  {
+  if (abs(error) <= 1) {
     distance_complete = 1;
     Kobuki_Drive(STOP);
-  }
-  else
-  {
+  } else {
     speed = (sign(error) * MIN_SPEED) + (int16_t)(GAIN_DRIVE * error);
     Kobuki_Drive(speed);
   }
@@ -143,8 +125,7 @@ void Kobuki_Drive_Distance(uint16_t current_distance_tick)
 // bytestream document
 #define EXTERN_PWR 0x30
 void Kobuki_Update_LEDs(Kobuki_LED_Enum led_1_colour,
-                        Kobuki_LED_Enum led_2_colour)
-{
+                        Kobuki_LED_Enum led_2_colour) {
   // Split LSB & MSB for payload
   uint8_t GPO_lsb = EXTERN_PWR; // keep 5V AND 3.3V on
   uint8_t GPO_msb = led_1_colour | (uint8_t)(led_2_colour << 2);
@@ -152,19 +133,15 @@ void Kobuki_Update_LEDs(Kobuki_LED_Enum led_1_colour,
   Kobuki_Tx(payload, sizeof(payload));
 }
 
-void Kobuki_Drive(int16_t speed)
-{
+void Kobuki_Drive(int16_t speed) {
   uint8_t speed_lsb = 0;
   uint8_t speed_msb = 0;
   // Construct payload
   uint8_t payload[] = {0x01, 0x04, 0x32, 0xC8, 0x00, 0x00};
   // saturation to avoid going over speed limit
-  if (speed > SPEED_LIMIT)
-  {
+  if (speed > SPEED_LIMIT) {
     speed = SPEED_LIMIT;
-  }
-  else if (speed < -SPEED_LIMIT)
-  {
+  } else if (speed < -SPEED_LIMIT) {
     speed = (~SPEED_LIMIT) + 1;
   }
   // Split LSB & MSB for payload
@@ -174,19 +151,15 @@ void Kobuki_Drive(int16_t speed)
   Kobuki_Tx(payload, sizeof(payload));
 }
 
-void Kobuki_Rotate(int16_t speed)
-{
+void Kobuki_Rotate(int16_t speed) {
   uint8_t speed_lsb = 0;
   uint8_t speed_msb = 0;
   // Construct payload
   uint8_t payload[] = {0x01, 0x04, 0x32, 0xC8, 0x01, 0x00};
   // saturation to avoid going over speed limit
-  if (speed > SPEED_LIMIT)
-  {
+  if (speed > SPEED_LIMIT) {
     speed = SPEED_LIMIT;
-  }
-  else if (speed < -SPEED_LIMIT)
-  {
+  } else if (speed < -SPEED_LIMIT) {
     speed = (~SPEED_LIMIT) + 1;
   }
   // split lsb & msb for payload
