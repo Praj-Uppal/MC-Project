@@ -20,7 +20,8 @@
 #define STOP ((int16_t)0)          // mm/s
 #define MIN_SPEED ((int16_t)50)    // mm/s
 
-typedef struct {
+typedef struct
+{
   uint8_t cliff;
   uint8_t bumper;
   uint8_t wheeldrop;
@@ -29,8 +30,14 @@ typedef struct {
   int16_t angle;
   uint8_t rotation_complete;
   uint8_t distance_complete;
-} Kobuki_Typedef;
-typedef enum uint8_t { OFF, RED, GREEN, YELLOW } Kobuki_LED_Enum;
+} volatile Kobuki_Typedef;
+typedef enum uint8_t
+{
+  OFF,
+  RED,
+  GREEN,
+  YELLOW
+} Kobuki_LED_Enum;
 
 void Kobuki_Rotate_Angle_Setpoint(int16_t current_angle_tick,
                                   int16_t rot_angle_deg);
@@ -52,8 +59,11 @@ void Kobuki_Read(Kobuki_Typedef *kobuki);
 // Truncate speed
 #define SPEED_LIMIT (int16_t)150 // mm / s
 // Kobuki drive forward / backward (+ ve is forward )
-void Kobuki_Drive(uint16_t speed);
+void Kobuki_Drive(int16_t speed);
 // Kobuki rotate CW / CCW (+ ve is CCW )
-void Kobuki_Rotate(uint16_t speed);
+void Kobuki_Rotate(int16_t speed);
+
+// Stop Kobuki drive and rotation
+void Kobuki_Stop(void);
 
 #endif

@@ -16,8 +16,20 @@
 // static variables and flags , keep these here in kobuki .c
 static volatile int32_t setpoint_distance_tick;
 static volatile int16_t setpoint_angle_deg;
-static uint8_t rotation_complete = 0;
-static uint8_t distance_complete = 0;
+static uint8_t rotation_complete =
+    1;  // Vatsal -> set flag to 1 initally so that the first time the
+        // Kobuki_Read() is called, it will not wait for a rotation to complete.
+static uint8_t distance_complete =
+    1;  // Vatsal -> set flag to 1 initally so that the first time the
+        // Kobuki_Read() is called, it will not wait for a movement to complete.
+
+// Stop Kobuki drive and rotation
+void Kobuki_Stop(void) {
+  Kobuki_Drive(STOP);
+  Kobuki_Rotate(STOP);
+  rotation_complete = 1;
+  distance_complete = 1;
+}
 
 // Updated Kobuki_Read () remember to replace the old wrapper
 void Kobuki_Read(Kobuki_Typedef* kobuki) {
@@ -113,7 +125,7 @@ void Kobuki_Drive_Distance(uint16_t current_distance_tick) {
     error = (int16_t)((double)(setpoint_alias - current_distance_tick) *
                       MM_PER_TICK);
   }
-  if (abs(error) <= 2) {
+  if (abs(error) <= 1) {
     distance_complete = 1;
     Kobuki_Drive(STOP);
   } else {
@@ -134,7 +146,7 @@ void Kobuki_Update_LEDs(Kobuki_LED_Enum led_1_colour,
   Kobuki_Tx(payload, sizeof(payload));
 }
 
-void Kobuki_Drive(uint16_t speed) {
+void Kobuki_Drive(int16_t speed) {
   uint8_t speed_lsb = 0;
   uint8_t speed_msb = 0;
   // Construct payload
@@ -152,7 +164,7 @@ void Kobuki_Drive(uint16_t speed) {
   Kobuki_Tx(payload, sizeof(payload));
 }
 
-void Kobuki_Rotate(uint16_t speed) {
+void Kobuki_Rotate(int16_t speed) {
   uint8_t speed_lsb = 0;
   uint8_t speed_msb = 0;
   // Construct payload

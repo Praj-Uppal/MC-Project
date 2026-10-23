@@ -1,6 +1,7 @@
 #include <stdint.h>
 #define STM32G474xx
 #include "stm32g4xx.h"
+#include "uart.h"
 
 void UART_Init(void) {
   // 1. Enable peripheral clocks
@@ -43,8 +44,8 @@ uint8_t UART_Rx(void) {
     USART3->ICR = USART_ICR_ORECF; // Write 1 to clear the Overrun flag
   }
   // Wait until the Read Data Register Not Empty ( RXNE ) flag is set
-  while (!(USART3->ISR & USART_ISR_RXNE))
-    ;
+  while (!(USART3->ISR & USART_ISR_RXNE)) {
+  };
   // Reading RDR automatically clears the RXNE flag
   return (uint8_t)(USART3->RDR & 0xFF);
 }
