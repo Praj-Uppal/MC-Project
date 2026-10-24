@@ -58,6 +58,7 @@ typedef enum {
 } ORIENTstate;  // Enum to represent the ORIENT states
 
 typedef enum {
+  STAGE_ROTATE0,
   STAGE_FORWARD1,
   STAGE_ROTATE1,
   STAGE_FORWARD2,
@@ -65,7 +66,6 @@ typedef enum {
 } PFstate;  // Enum to represent the pathfinding states
 
 typedef enum {
-  STORAGE_ALIGN,
   STORAGE_ORIENT,
   STORAGE_FORWARD,
   STORAGE_DONE
@@ -97,9 +97,19 @@ static volatile ALIGNstate align_state = ALIGN_INIT;
 static volatile ORIENTstate orient_state =
     ORIENT_INIT;  // used by Layout_Detect
 static volatile PFstate pathfind_state =
-    STAGE_FORWARD1;  // shared by layout A and B
-static volatile STORAGEstate storage_state = STORAGE_ALIGN;
+    STAGE_ROTATE0;  // shared by layout A and B
+static volatile STORAGEstate storage_state = STORAGE_ORIENT;
 static volatile DEPOSITstate deposit_state = DEPOSIT_ALIGN;
+
+// Results from the last align sweep. Distance to closest object in aligmin_d
+// Absolute angle/heading to detected object in align_theta.
+static int16_t align_min_d;
+static int32_t align_theta;
+
+// Absolute angle/Heading of the blocking bollard at the begining.
+// Use this as a reference for every subseuquent calculation/decision making.
+// This will be set after search.
+static int32_t headingRef;
 
 //*******Functions**********/
 
@@ -140,6 +150,7 @@ bool align(int16_t distanceThresh) {
 
   // ultrasonic reading
   volatile int16_t d = Ultrasonic_Read();
+  // debug variables
   debug_d = d;
   d += TOTAL_CALIBRATION;  // Add calibration to the ultrasonic reading
   debug_distance = d;
@@ -159,22 +170,24 @@ bool align(int16_t distanceThresh) {
       }
       align_state = ALIGN_LEFT;
       break;
-      break;
-
       // vatsal -> the ALIGN_LEFT and ALIGN_RIGHT was chnaged by me, apparently
       // this will perfrom better than the previous implementation. The previous
       // implementation was commented out below.
     case ALIGN_LEFT:
       if (d <= distanceThresh) {
         thetaLeft = kobuki.angle;
+        align_min_d = d;  // Take current distance as minimum distance for now
         align_state = ALIGN_RIGHT;
       } else
         Kobuki_Rotate(SEARCH_SPEED);  // keep turning
       break;
     case ALIGN_RIGHT:
-      if (d <= distanceThresh)
+      if (d <= distanceThresh) {
+        if (d < align_min_d)
+          align_min_d = d;  // Update minimum alignment distance, if shorter
+                            // distance detected
         Kobuki_Rotate(SEARCH_SPEED);
-      else {
+      } else {
         thetaRight = kobuki.angle;
         Kobuki_Rotate(STOP);
         align_state = ALIGN_ALIGNING;
@@ -183,8 +196,8 @@ bool align(int16_t distanceThresh) {
 
       // State for getting theta left
       // case ALIGN_LEFT:
-      //   // if detected an edge, record and enter theta right detection state
-      //   if (d <= distanceThresh) {
+      //   // if detected an edge, record and enter theta right detection
+      //   state if (d <= distanceThresh) {
       //     thetaLeft = kobuki.angle;
       //     align_state = ALIGN_RIGHT;
       //   } else { // Else continue sweep in 5 degree increments.
@@ -192,15 +205,14 @@ bool align(int16_t distanceThresh) {
       //   }
       //   break;
       // case ALIGN_RIGHT:
-      //   // If object is detected, continue sweeping in 5 degree increments
-      //   if (d <= distanceThresh) {
+      //   // If object is detected, continue sweeping in 5 degree
+      //   increments if (d <= distanceThresh) {
       //     Kobuki_Rotate_Angle_Setpoint(kobuki.angle, 1);
       //   } else { // Once object out of LOS, record the angle, and set to
       //     // alignment state.
       //     thetaRight = kobuki.angle;
       //     align_state = ALIGN_ALIGNING;
       //   }
-      break;
     case ALIGN_ALIGNING:
       // Determine the theta average to go to.
       // The angles currently are measured in the rotary encoder ticks.
@@ -208,12 +220,14 @@ bool align(int16_t distanceThresh) {
       // conversion adds more work.
       theta = thetaLeft + wrap(thetaRight - thetaLeft) / 2;
 
-      theta = wrap(theta - 600);  // Add 6 degree offset to ensure alignment is
-                                  // not too close to the bollard.
+      theta = wrap(theta - 600);  // Add 6 degree offset to ensure alignment
+                                  // is not too close to the bollard.
+
+      align_theta = theta;  // Set the
       debug_theta_deg = theta * DEG_PER_TICK;
       debug_span = wrap(thetaRight - thetaLeft);
-      // Helper function to set a rotation to a specified absolute angle based.
-      // Process based on the rotary encoder ticks
+      // Helper function to set a rotation to a specified absolute angle
+      // based. Process based on the rotary encoder ticks
       Kobuki_Rotate_AbsAngleTickBased(kobuki.angle, theta);
       // once set, enter state done.
       align_state = ALIGN_DONE;
@@ -262,7 +276,8 @@ int Layout_Detect(void) {
       } else {
         // If the distance is not within the range for either layout,
         // rotate 3 degrees to get a better reading
-        Kobuki_Rotate_Angle_Setpoint(kobuki.angle, 3);  // Rotate 3 degrees CCW
+        Kobuki_Rotate_Angle_Setpoint(kobuki.angle,
+                                     3);  // Rotate 3 degrees CCW
       }
       return 0;
       break;
@@ -278,26 +293,6 @@ int Layout_Detect(void) {
   }
 }
 
-bool orient(int16_t angle) {
-  if (!kobuki.rotation_complete || !kobuki.distance_complete) {
-    return 0;
-  }
-
-  switch (orient_state) {
-    case ORIENT_INIT:
-      Kobuki_Rotate_Angle_Setpoint(kobuki.angle, 180);
-      orient_state = ORIENT_DONE;
-      break;
-    case ORIENT_DONE:
-      orient_state = ORIENT_INIT;
-      return 1;
-      break;
-    default:
-      break;
-  }
-  return 0;
-}
-
 // PRAJ - Pathfinding FSM for Layout A
 bool layoutAFSM(void) {
   if (!kobuki.distance_complete || !kobuki.rotation_complete) {
@@ -305,13 +300,23 @@ bool layoutAFSM(void) {
   }
 
   switch (pathfind_state) {
+    case STAGE_ROTATE0:
+      // Facing A1 (up the page). Turn right, towards section 4.
+      // heading - 9000 is a clockwise rotation of 90 degrees, making heading
+      // towards right.
+      Kobuki_Rotate_AbsAngleTickBased(kobuki.angle, wrap(headingRef - 9000));
+      pathfind_state = STAGE_FORWARD1;
+      return 0;
+      break;
     case STAGE_FORWARD1:
       Kobuki_Drive_Distance_Setpoint(kobuki.distance, 1195);
       pathfind_state = STAGE_ROTATE1;
       return 0;
       break;
     case STAGE_ROTATE1:
-      Kobuki_Rotate_Angle_Setpoint(kobuki.angle, 270);
+      // Turn back up the page, towards section 3.
+      // make heading same as headingRef
+      Kobuki_Rotate_AbsAngleTickBased(kobuki.angle, headingRef);
       pathfind_state = STAGE_FORWARD2;
       return 0;
       break;
@@ -321,7 +326,8 @@ bool layoutAFSM(void) {
       return 0;
       break;
     case STAGE_DONE:
-      pathfind_state = STAGE_FORWARD1;
+      // Reset to initial state
+      pathfind_state = STAGE_ROTATE0;
       return 1;
       break;
     default:
@@ -337,13 +343,22 @@ bool layoutBFSM(void) {
   }
 
   switch (pathfind_state) {
+    case STAGE_ROTATE0:
+      // Facing B1 (to the right). Turn up the page, towards section 2.
+      // Add 9000 to current heading to perform a 90 degrees ACW rotation.
+      Kobuki_Rotate_AbsAngleTickBased(kobuki.angle, wrap(headingRef + 9000));
+      pathfind_state = STAGE_FORWARD1;
+      return 0;
+      break;
     case STAGE_FORWARD1:
       Kobuki_Drive_Distance_Setpoint(kobuki.distance, 1395);
       pathfind_state = STAGE_ROTATE1;
       return 0;
       break;
     case STAGE_ROTATE1:
-      Kobuki_Rotate_Angle_Setpoint(kobuki.angle, 270);
+      // Turn back to the right, towards section 3.
+      // Make heading back to heading reference.
+      Kobuki_Rotate_AbsAngleTickBased(kobuki.angle, headingRef);
       pathfind_state = STAGE_FORWARD2;
       return 0;
       break;
@@ -353,7 +368,8 @@ bool layoutBFSM(void) {
       return 0;
       break;
     case STAGE_DONE:
-      pathfind_state = STAGE_FORWARD1;
+      // Reset to initial state.
+      pathfind_state = STAGE_ROTATE0;
       return 1;
       break;
     default:
@@ -370,23 +386,27 @@ bool storageFSM(void) {
   }
 
   switch (storage_state) {
-    case STORAGE_ALIGN:
-      bool volatile ret = align(100);  // Align FSM subroutine
-
-      if (ret == 1) {  // If alignment finished
-        storage_state = STORAGE_ORIENT;
-      }
-      break;
     case STORAGE_ORIENT:
-      Kobuki_Rotate_Angle_Setpoint(kobuki.angle, 180);
+      // Both paths end at the same spot in section 3, on the line through
+      // the middle of the storage entrance. Face down-left along it ()
+      // (Layout A headingRef is up the page, layout B, the reference is to the
+      // right.). For layout A rotate 135 degrees ACW, for layout B rotate 135
+      // degrees CW.
+      if (layout == LAYOUT_A) {
+        Kobuki_Rotate_AbsAngleTickBased(kobuki.angle, wrap(headingRef + 13500));
+      } else {
+        Kobuki_Rotate_AbsAngleTickBased(kobuki.angle, wrap(headingRef - 13500));
+      }
       storage_state = STORAGE_FORWARD;
       break;
     case STORAGE_FORWARD:
-      Kobuki_Drive_Distance_Setpoint(kobuki.distance, 918);
+      // Drive through the entrance to the point between D1 and D2.
+      Kobuki_Drive_Distance_Setpoint(kobuki.distance, 945);
       storage_state = STORAGE_DONE;
       break;
     case STORAGE_DONE:
-      storage_state = STORAGE_ALIGN;
+      // Return to orient state for reset
+      storage_state = STORAGE_ORIENT;
       return 1;
       break;
     default:
@@ -404,15 +424,20 @@ bool depositFSM(void) {
 
   switch (deposit_state) {
     case DEPOSIT_ALIGN:
-      bool volatile ret = align(100);  // Align FSM subroutine
+      // The marker is approximately 330 mm away from the storage stop
+      // point
+      // the A2/B2 bollards outside the unit are above 500 mm so they should be
+      // ignored.
+      bool volatile ret = align(260);  // Align FSM subroutine
       if (ret == 1) {                  // If alignment finished
         deposit_state = DEPOSIT_FORWARD;
       }
       break;
     case DEPOSIT_FORWARD: {
-      int16_t travelD =
-          Ultrasonic_Read() + TOTAL_CALIBRATION - 100;  // 10cm safegaurd
-      if (travelD > 0) {
+      // Use the closest reading from the sweep.
+      // Negative = reverse from current point.
+      int16_t travelD = align_min_d - 100;  // 10cm safegaurd
+      if (travelD != 0) {
         Kobuki_Drive_Distance_Setpoint(kobuki.distance, travelD);
       }
       deposit_state = DEPOSIT_DONE;
@@ -432,8 +457,8 @@ void reset_all_fsms(void) {
   // Reset all FSM states to their initial values
   align_state = ALIGN_INIT;
   orient_state = ORIENT_INIT;
-  pathfind_state = STAGE_FORWARD1;
-  storage_state = STORAGE_ALIGN;
+  pathfind_state = STAGE_ROTATE0;
+  storage_state = STORAGE_ORIENT;
   deposit_state = DEPOSIT_ALIGN;
 }
 
@@ -483,13 +508,14 @@ int main(void) {
           }
           break;
         }
-      case SEARCH: {                     // Aligns with blocking bollard
-        bool volatile ret = align(300);  // Align FSM subroutine
+      case SEARCH: {  // Aligns with blocking bollard
+        // A1 is approximately 360 mm (calibrated) from the start, B1
+        // approximately 210 mm.
+        bool volatile ret = align(400);  // Align FSM subroutine
         if (ret == 1) {                  // If alignment finished
-          current_state = IDLE;  // Set to IDLE state for testing purposes. In
-                                 // final code, should be set to ORIENT state.
-          led_1 = OFF;  // Turn off red LED to indicate search mode is complete.
-        } else {        // if alignment incomplete
+          headingRef = align_theta;
+          current_state = ORIENT;
+        } else {  // if alignment incomplete
           // Rotate angle, and repeat.
           if (!kobuki.rotation_complete) {
             Kobuki_Rotate_Angle(kobuki.angle);
@@ -500,20 +526,20 @@ int main(void) {
       }
       case ORIENT: {
         // Vatsal -> Layout Detecttion Function. This function will read the
-        // distance from the ultrasonic sensor and determine the layout based on
-        // the distance. It will set the layout variable to LAYOUT_A or LAYOUT_B
-        // and set the layout_detected flag to 1 if a valid layout is detected.
+        // distance from the ultrasonic sensor and determine the layout based
+        // on the distance. It will set the layout variable to LAYOUT_A or
+        // LAYOUT_B and set the layout_detected flag to 1 if a valid layout is
+        // detected.
 
-        int volatile ret2 = Layout_Detect();
-        if (ret2 == 0) {
-          if (!kobuki.rotation_complete) {
-            Kobuki_Rotate_Angle(
-                kobuki.angle);  // Rotate to get a better reading
-          }
-        } else if (ret2 == 1) {
-          current_state =
-              IDLE;  // Move to ____ state if layout detection is complete
+        // Use  the closest distance reading of the sweep
+        // 285 used as it is halfway between the A1 bollard at 360 mm
+        // and the B1 bollard at 210 mm. Below or above decides layout.
+        if (align_min_d > 285) {
+          layout = LAYOUT_A;
+        } else {
+          layout = LAYOUT_B;
         }
+        current_state = PATHFIND;
       } break;
 
       case PATHFIND: {
@@ -532,7 +558,7 @@ int main(void) {
         }
 
         if (pfret == 1) {
-          current_state = DEPOSIT;
+          current_state = STORAGE;
         } else {
           if (!kobuki.distance_complete) {
             Kobuki_Drive_Distance(kobuki.distance);
@@ -559,6 +585,7 @@ int main(void) {
         volatile bool depositRet = depositFSM();
         if (depositRet) {
           current_state = IDLE;  // Finished
+          led_1 = OFF;
         } else {
           if (!kobuki.distance_complete) {
             Kobuki_Drive_Distance(kobuki.distance);
