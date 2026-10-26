@@ -112,9 +112,13 @@ void Kobuki_Drive_Distance_Setpoint(uint16_t current_distance_tick,
 void Kobuki_Drive_Distance(uint16_t current_distance_tick) {
   volatile int16_t speed;
   volatile int16_t error;
-  // The encoder is 16 bits and wraps. Taking the difference in 16 bits and
-  // reading it as signed gives the right error whichever way it wrapped
-  // (including overshooting past the wrap), for moves up to ~2.7 m.
+
+  // The previous error calculation used setpoint_alias as a wrap around for
+  // setpoint_distnace tick if it was negative.
+  // But this isnt necessary actually as wrapping it around takes away the sign
+  // and we want to keep the sign to indicate the right error whichever way it
+  // is.
+  // Simply remove the wraparound.
   int16_t error_ticks =
       (int16_t)((uint16_t)setpoint_distance_tick - current_distance_tick);
   error = (int16_t)((double)error_ticks * MM_PER_TICK);
