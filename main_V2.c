@@ -22,17 +22,33 @@
   (ULTRASONIC_CALIBRATION - FRONT_LENGTH)  // Total calibration value
 
 // align() detection thresholds (calibrated mm)
-#define SEARCH_THRESH 400    // A1 is ~360 mm from the start, B1 ~210 mm
+#define SEARCH_THRESH \
+  500  // bollard A1 is 360 mm from start, B1  is 210 mm. Pick a detection range
+       // that picks up both while not picking up deposit or other bollards
 #define LAYOUT_SPLIT 285     // halfway between A1 and B1
 #define DEPOSIT_THRESH 260   // marker ~140 mm; A2/B2 outside the unit ~370 mm
 #define ALIGN_OFFSET DEG(6)  // sensor latency makes the sweep centre late
 #define DEPOSIT_GAP 100      // stop this far from the deposit marker
 
-// lengths of paths (mm).
-// Both layouts end at the same spot in section 3, on the
-// line through the middle of the storage entrance so these are constants.
-#define LEG_SHORT 1195
-#define LEG_LONG 1395
+// Cliff and bumper bits, read as 0bLCR (same layout for kobuki.cliff and
+// kobuki.bumper).
+#define SENSOR_RIGHT 0x01U
+#define SENSOR_CENTRE 0x02U
+#define SENSOR_LEFT 0x04U
+
+// Kobuki drives drives towards a platform edge, until the cliff sensor is
+// triggered. Then reverse a bit, sepcified by edge backoff. From diagram, cliff
+// sensor 165 mm ahead of centre, so we stop around 205 mm from the edge. This
+// lines up decently with corner.
+
+#define EDGE_SPEED ((int16_t)100)  // speed while looking for the edge
+#define EDGE_BACKOFF 40            // backoff distance
+
+// Course correction: one of the side cliff sensors right or left triggering on
+// its own means the robot has drifted towards the edge off the course. Back off
+// a little and turn this far away from that edge, then continue.
+#define SIDE_BACKOFF 30  // mm
+#define CORRECTION_DEG 5
 // Also the same for both layouts.
 #define STORAGE_LEG 945  // to the point equidistant from D1 and D2
 
@@ -104,6 +120,9 @@ static int32_t align_theta;
 // Absolute heading (ticks) of the blocking bollard, set after SEARCH.
 // Every later turn is relative to this, so turn errors don't add up.
 static int32_t headingRef;
+
+// Pending course-correction turn (degrees) from Drive_To_Edge().
+static int16_t edge_correction_deg;
 
 //*******Functions**********/
 
@@ -200,19 +219,52 @@ bool align(int16_t distanceThresh) {
   return 0;
 }
 
+// Drive forward until the centre cliff sensor sees the platform edge ahead,
+// then start reversing EDGE_BACKOFF. If only a side sensor fires, steer away
+// from that edge and keep going. Call every loop; returns 1 once the edge
+// ahead is found.
+bool Drive_To_Edge(void) {
+  // Turn left over from a side correction, once the back-off has finished.
+  if (edge_correction_deg != 0) {
+    Rotate_To(wrap(kobuki.angle + DEG(edge_correction_deg)));
+    edge_correction_deg = 0;
+    return 0;
+  }
+
+  if (kobuki.cliff == 0) {
+    Kobuki_Drive(EDGE_SPEED);
+    return 0;
+  }
+
+  Kobuki_Drive(STOP);
+  if (kobuki.cliff == SENSOR_LEFT) {
+    // Edge on the left: back off, then turn right (CW).
+    Kobuki_Drive_Distance_Setpoint(kobuki.distance, -SIDE_BACKOFF);
+    edge_correction_deg = -CORRECTION_DEG;
+    return 0;
+  }
+  if (kobuki.cliff == SENSOR_RIGHT) {
+    // Edge on the right: back off, then turn left (CCW).
+    Kobuki_Drive_Distance_Setpoint(kobuki.distance, -SIDE_BACKOFF);
+    edge_correction_deg = CORRECTION_DEG;
+    return 0;
+  }
+
+  // Centre sensor (or more than one): this is the edge ahead.
+  Kobuki_Drive_Distance_Setpoint(kobuki.distance, -EDGE_BACKOFF);
+  return 1;
+}
+
 // PRAJ - Pathfinding FSM, from the start to section 3.
 // Layout A: A1 is up the page, so go right (section 4) then up.
 // Layout B: B1 is to the right, so go up (section 2) then right.
+// Each leg runs to the platform edge, so it doesn't rely on the encoders.
 bool pathfindFSM(void) {
-  int16_t turn, leg1, leg2;
+  int16_t turn;
   if (layout == LAYOUT_A) {
     turn = -90;
-    leg1 = LEG_SHORT;
-    leg2 = LEG_LONG;
   } else {
     turn = 90;
-    leg1 = LEG_LONG;
-    leg2 = LEG_SHORT;
   }
 
   switch (pathfind_state) {
@@ -221,16 +273,18 @@ bool pathfindFSM(void) {
       pathfind_state = STAGE_FORWARD1;
       break;
     case STAGE_FORWARD1:
-      Kobuki_Drive_Distance_Setpoint(kobuki.distance, leg1);
-      pathfind_state = STAGE_ROTATE1;
+      if (Drive_To_Edge()) {
+        pathfind_state = STAGE_ROTATE1;
+      }
       break;
     case STAGE_ROTATE1:
       Rotate_To_Ref(0);  // back to the bollard's heading
       pathfind_state = STAGE_FORWARD2;
       break;
     case STAGE_FORWARD2:
-      Kobuki_Drive_Distance_Setpoint(kobuki.distance, leg2);
-      pathfind_state = STAGE_DONE;
+      if (Drive_To_Edge()) {
+        pathfind_state = STAGE_DONE;
+      }
       break;
     case STAGE_DONE:
       pathfind_state = STAGE_ROTATE0;
@@ -296,6 +350,7 @@ void reset_all_fsms(void) {
   pathfind_state = STAGE_ROTATE0;
   storage_state = STORAGE_ORIENT;
   deposit_state = DEPOSIT_ALIGN;
+  edge_correction_deg = 0;
 }
 
 // Main function to initialize the robot and run the main loop.
@@ -319,7 +374,8 @@ int main(void) {
     }
 
     // Let any drive or rotation in progress finish before the next step.
-    if (Motion_Update()) {
+    // Skipped in IDLE so a stop takes effect immediately.
+    if (current_state != IDLE && Motion_Update()) {
       continue;
     }
 
@@ -332,6 +388,7 @@ int main(void) {
           current_state = SEARCH;
           led_1 = RED;  // red while running
         }
+        break;
       case SEARCH:  // Align with the blocking bollard, its distance gives
                     // the layout.
         if (align(SEARCH_THRESH)) {
