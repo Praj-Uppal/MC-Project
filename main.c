@@ -67,10 +67,10 @@
 // lengths of paths (mm).
 // Both layouts end at the same spot in section 3, on the
 // line through the middle of the storage entrance so these are constants.
-#define LEG_SHORT 1195
-#define LEG_LONG 1395
+#define LEG_SHORT 1180
+#define LEG_LONG 1380
 
-#define STORAGE_LEG 945 // to the point equidistant from D1 and D2
+#define STORAGE_LEG 920 // to the point equidistant from D1 and D2
 
 //*******Enums**********/
 typedef enum {
