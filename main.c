@@ -9,36 +9,37 @@
 #include "Ultrasonic/ultrasonic.h"
 /*******Definitions**********/
 
-#define DEG_PER_TICK (1.0 / 100.0)   // Gyro ticks are 0.01 degrees
-#define DEG(x) ((int32_t)(x) * 100)  // convert degrees to gyro ticks
+#define DEG_PER_TICK (1.0 / 100.0)  // Gyro ticks are 0.01 degrees
+#define DEG(x) ((int32_t)(x) * 100) // convert degrees to gyro ticks
 
-#define BUTTON_0_START 0x01U  // Button 0 is pressed
-#define BUTTON_1_STOP 0x02U   // Button 1 is pressed
+#define BUTTON_0_START 0x01U // Button 0 is pressed
+#define BUTTON_1_STOP 0x02U  // Button 1 is pressed
+#define BUTTON_2 0x04U       // Button 2 is pressed
 
 // Calibration value for the ultrasonic sensor
 #define ULTRASONIC_CALIBRATION 55
-#define FRONT_LENGTH 245  // Length of the front of the robot
-#define TOTAL_CALIBRATION   \
-  (ULTRASONIC_CALIBRATION - \
-   FRONT_LENGTH)  // Total calibration value including front
+#define FRONT_LENGTH 245 // Length of the front of the robot
+#define TOTAL_CALIBRATION                                                      \
+  (ULTRASONIC_CALIBRATION -                                                    \
+   FRONT_LENGTH) // Total calibration value including front
 
 // align() detection thresholds (calibrated mm)
-#define SEARCH_THRESH \
-  500  // bollard A1 is 360 mm from start, B1  is 210 mm. Pick a detection range
-       // that picks up both while not picking up deposit or other bollards
-#define LAYOUT_SPLIT 285  // halfway between A1 and B1
-#define DEPOSIT_THRESH \
-  260  // markers in the storage are close around 140 mm; A2/B2 outside the unit
-       // at around 370 mm. Choose 260 mm.
-#define ALIGN_OFFSET DEG(6)  // sensor latency makes the sweep centre late
+#define SEARCH_THRESH                                                          \
+  500 // bollard A1 is 360 mm from start, B1  is 210 mm. Pick a detection range
+      // that picks up both while not picking up deposit or other bollards
+#define LAYOUT_SPLIT 285 // halfway between A1 and B1
+#define DEPOSIT_THRESH                                                         \
+  260 // markers in the storage are close around 140 mm; A2/B2 outside the unit
+      // at around 370 mm. Choose 260 mm.
+#define ALIGN_OFFSET DEG(16) // sensor latency makes the sweep centre late
 #define DEPOSIT_GAP 100      // stop this far from the deposit marker
 
 // The ultrasonic sensor minimum range of 300mm. Anything close gets clamped.
 // This is important in deposit state, where if we are too close (15mm) to
 // bollard it reads as 300. Need to back up first, then remeasure.
-#define US_MIN_RANGE (300 + TOTAL_CALIBRATION)  // calibrated mm
-#define US_CLOSE_MARGIN 15                      // mm
-#define DEPOSIT_BACKUP 100                      // mm
+#define US_MIN_RANGE (300 + TOTAL_CALIBRATION) // calibrated mm
+#define US_CLOSE_MARGIN 15                     // mm
+#define DEPOSIT_BACKUP 100                     // mm
 
 // Cliff and bumper bits, read as 0bLCR (same layout for kobuki.cliff and
 // kobuki.bumper).
@@ -51,40 +52,49 @@
 // sensor 165 mm ahead of centre, so we stop around 205 mm from the edge. This
 // lines up decently with corner.
 
-#define EDGE_SPEED ((int16_t)100)  // speed while looking for the edge
-#define EDGE_BACKOFF 40            // backoff distance
+#define EDGE_SPEED ((int16_t)100) // speed while looking for the edge
+#define EDGE_BACKOFF 40           // backoff distance
 
 // Course correction: one of the side cliff sensors right or left triggering on
 // its own means the robot has drifted towards the edge off the course. Back off
 // a little and turn this far away from that edge, then continue. A side bumper
 // on its own is handled the same way: the legs pass close to the storage
 // unit's walls, so drifting towards one scrapes it with that side's bumper.
-#define SIDE_BACKOFF 30  // mm
+#define SIDE_BACKOFF 30 // mm
 #define CORRECTION_DEG 5
 // Also the same for both layouts.
-#define STORAGE_LEG 945  // to the point equidistant from D1 and D2
+
+// lengths of paths (mm).
+// Both layouts end at the same spot in section 3, on the
+// line through the middle of the storage entrance so these are constants.
+#define LEG_SHORT 1195
+#define LEG_LONG 1395
+
+#define STORAGE_LEG 945 // to the point equidistant from D1 and D2
 
 //*******Enums**********/
 typedef enum {
   LAYOUT_A,
   LAYOUT_B
-} LayoutState;  // Enum to represent the layout state (A or B)
+} LayoutState; // Enum to represent the layout state (A or B)
 
 typedef enum {
   IDLE,
   SEARCH,
   PATHFIND,
   STORAGE,
-  DEPOSIT
-} State;  // Enum to represent the different states of the robot
+  DEPOSIT,
+  RECOVER
+} State; // Enum to represent the different states of the robot
 
 typedef enum {
   ALIGN_INIT,
+  ALIGN_TURNOUT,
   ALIGN_LEFT,
   ALIGN_RIGHT,
   ALIGN_ALIGNING,
   ALIGN_DONE
-} ALIGNstate;  // Enum to represent the alignment states
+} ALIGNstate; // Enum to represent the alignment states
 
 typedef enum {
   STAGE_ROTATE0,
@@ -92,38 +102,59 @@ typedef enum {
   STAGE_ROTATE1,
   STAGE_FORWARD2,
   STAGE_DONE
-} PFstate;  // Enum to represent the pathfinding states
+} PFstate; // Enum to represent the pathfinding states
 
 typedef enum {
   STORAGE_ORIENT,
   STORAGE_FORWARD,
   STORAGE_DONE
-} STORAGEstate;  // Enum to represent the storage states
+} STORAGEstate; // Enum to represent the storage states
 
 typedef enum {
   DEPOSIT_ALIGN,
   DEPOSIT_FORWARD,
   DEPOSIT_DONE
-} DEPOSITstate;  // Enum to represent the deposit states
+} DEPOSITstate; // Enum to represent the deposit states
+
+typedef enum { RECOVER_BACKUP, RECOVER_ROTATE, RECOVER_DONE } RECOVERState;
 
 ///*******Global Variables**********/
 
 // for debugging purposes
 volatile int16_t debug_d;
-volatile ALIGNstate debug_state;
-volatile float debug_theta_deg;
+
+volatile State debug_state;
+volatile ALIGNstate debug_align_state;
+volatile PFstate debug_pathfind_state;
+volatile STORAGEstate debug_storage_state;
+volatile DEPOSITstate debug_deposit_state;
+volatile RECOVERState debug_recover_state;
+
+volatile int32_t debug_thetaRight_deg;
+volatile int32_t debug_thetaLeft_deg;
+volatile float debug_thetaTarget_deg;
 volatile int32_t debug_span;
 
-volatile LayoutState layout;  // Variable to store the current layout state
+volatile uint16_t debug_cliff;
+volatile uint16_t debug_bumper;
+volatile uint16_t debug_wheeldrop;
+volatile int16_t
+    debug_layout; // Variable to store the current layout state for debugging
 
-volatile Kobuki_Typedef kobuki;  // Kobuki is global as used in many functions.
+volatile int16_t debug_recover_turn_deg;
+
+volatile LayoutState layout; // Variable to store the current layout state
+
+volatile Kobuki_Typedef kobuki; // Kobuki is global as used in many functions.
+
+volatile int16_t recover_turn_deg = 0; // turn to avoid obstacle
 
 // FSM state variables (file scope so reset_all_fsms() can reach them)
 static ALIGNstate align_state = ALIGN_INIT;
 static PFstate pathfind_state = STAGE_ROTATE0;
 static STORAGEstate storage_state = STORAGE_ORIENT;
 static DEPOSITstate deposit_state = DEPOSIT_ALIGN;
-
+static RECOVERState recover_state = RECOVER_BACKUP;
 // Results from the last align sweep. Distance to closest object in
 // align_min_d, absolute heading (ticks) to the object in align_theta.
 static int16_t align_min_d;
@@ -140,8 +171,10 @@ static int16_t edge_correction_deg;
 
 // Function to wrap an angle in ticks to the range [-18000, 18000].
 int32_t wrap(int32_t angle) {
-  while (angle > 18000) angle -= 36000;
-  while (angle < -18000) angle += 36000;
+  while (angle > 18000)
+    angle -= 36000;
+  while (angle < -18000)
+    angle += 36000;
   return angle;
 }
 
@@ -179,54 +212,65 @@ bool align(int16_t distanceThresh) {
 
   int16_t d = Ultrasonic_Read() + TOTAL_CALIBRATION;
   debug_d = d;
-  debug_state = align_state;
+  debug_align_state = align_state;
 
   switch (align_state) {
-    case ALIGN_INIT:
-      // If an object is already in view, turn it out of the beam first so
-      // the sweep catches its leading edge.
-      if (d <= distanceThresh) {
-        Rotate_To(wrap(kobuki.angle + DEG(45)));
-      }
+  case ALIGN_INIT:
+
+    if (d <= distanceThresh) {
+      Rotate_To(wrap(kobuki.angle + DEG(45)));
+      align_state = ALIGN_TURNOUT;
+    } else {
       align_state = ALIGN_LEFT;
-      break;
-    case ALIGN_LEFT:
-      // Keep turning until the object enters the beam.
-      if (d <= distanceThresh) {
-        thetaLeft = kobuki.angle;
+    }
+    break;
+  case ALIGN_TURNOUT:
+
+    if (kobuki.rotation_complete) {
+      align_state = ALIGN_LEFT;
+    }
+
+    break;
+  case ALIGN_LEFT:
+    // Keep turning until the object enters the beam.
+    if (d <= distanceThresh) {
+      thetaLeft = kobuki.angle;
+      debug_thetaLeft_deg = thetaLeft * DEG_PER_TICK;
+
+      align_min_d = d;
+      align_state = ALIGN_RIGHT;
+    } else {
+      Kobuki_Rotate(SEARCH_SPEED);
+    }
+    break;
+  case ALIGN_RIGHT:
+    // Keep turning until it leaves the beam, tracking the closest reading.
+    if (d <= distanceThresh) {
+      if (d < align_min_d) {
         align_min_d = d;
-        align_state = ALIGN_RIGHT;
-      } else {
-        Kobuki_Rotate(SEARCH_SPEED);
       }
-      break;
-    case ALIGN_RIGHT:
-      // Keep turning until it leaves the beam, tracking the closest reading.
-      if (d <= distanceThresh) {
-        if (d < align_min_d) {
-          align_min_d = d;
-        }
-        Kobuki_Rotate(SEARCH_SPEED);
-      } else {
-        thetaRight = kobuki.angle;
-        Kobuki_Rotate(STOP);
-        align_state = ALIGN_ALIGNING;
-      }
-      break;
-    case ALIGN_ALIGNING:
-      // Turn to the middle of the two edges.
-      align_theta =
-          wrap(thetaLeft + wrap(thetaRight - thetaLeft) / 2 - ALIGN_OFFSET);
-      debug_theta_deg = align_theta * DEG_PER_TICK;
-      debug_span = wrap(thetaRight - thetaLeft);
-      Rotate_To(align_theta);
-      align_state = ALIGN_DONE;
-      break;
-    case ALIGN_DONE:
-      align_state = ALIGN_INIT;
-      return 1;
-    default:
-      break;
+      Kobuki_Rotate(SEARCH_SPEED);
+    } else {
+      thetaRight = kobuki.angle;
+      debug_thetaRight_deg = thetaRight * DEG_PER_TICK;
+      Kobuki_Rotate(STOP);
+      align_state = ALIGN_ALIGNING;
+    }
+    break;
+  case ALIGN_ALIGNING:
+    // Turn to the middle of the two edges.
+    align_theta =
+        wrap(thetaLeft + wrap(thetaRight - thetaLeft) / 2 - ALIGN_OFFSET);
+    debug_thetaTarget_deg = align_theta * DEG_PER_TICK;
+    debug_span = wrap(thetaRight - thetaLeft);
+    Rotate_To(align_theta);
+    align_state = ALIGN_DONE;
+    break;
+  case ALIGN_DONE:
+    align_state = ALIGN_INIT;
+    return 1;
+  default:
+    break;
   }
   return 0;
 }
@@ -277,6 +321,43 @@ bool Drive_To_Edge(void) {
 // Layout B: B1 is to the right, so go up (section 2) then right.
 // Each leg runs to the platform edge, so it doesn't rely on the encoders.
 bool pathfindFSM(void) {
+  //  int16_t turn, leg1, leg2;
+  //  debug_layout = layout; // Store the current layout state for debugging
+  // if (layout == LAYOUT_A) {
+  //   turn = -90;
+  //   leg1 = LEG_SHORT;
+  //   leg2 = LEG_LONG;
+  // } else {
+  //   turn = 90;
+  //   leg1 = LEG_LONG;
+  //   leg2 = LEG_SHORT;
+  // }
+
+  // switch (pathfind_state) {
+  //   case STAGE_ROTATE0:
+  //     Rotate_To_Ref(turn);
+  //     pathfind_state = STAGE_FORWARD1;
+  //     break;
+  //   case STAGE_FORWARD1:
+  //     Kobuki_Drive_Distance_Setpoint(kobuki.distance, leg1);
+  //     pathfind_state = STAGE_ROTATE1;
+  //     break;
+  //   case STAGE_ROTATE1:
+  //     Rotate_To_Ref(0);  // back to the bollard's heading
+  //     pathfind_state = STAGE_FORWARD2;
+  //     break;
+  //   case STAGE_FORWARD2:
+  //     Kobuki_Drive_Distance_Setpoint(kobuki.distance, leg2);
+  //     pathfind_state = STAGE_DONE;
+  //     break;
+  //   case STAGE_DONE:
+  //     pathfind_state = STAGE_ROTATE0;
+  //     return 1;
+  //   default:
+  //     break;
+  // }
+  // return 0;
+
   int16_t turn;
   if (layout == LAYOUT_A) {
     turn = -90;
@@ -285,29 +366,29 @@ bool pathfindFSM(void) {
   }
 
   switch (pathfind_state) {
-    case STAGE_ROTATE0:
-      Rotate_To_Ref(turn);
-      pathfind_state = STAGE_FORWARD1;
-      break;
-    case STAGE_FORWARD1:
-      if (Drive_To_Edge()) {
-        pathfind_state = STAGE_ROTATE1;
-      }
-      break;
-    case STAGE_ROTATE1:
-      Rotate_To_Ref(0);  // back to the bollard's heading
-      pathfind_state = STAGE_FORWARD2;
-      break;
-    case STAGE_FORWARD2:
-      if (Drive_To_Edge()) {
-        pathfind_state = STAGE_DONE;
-      }
-      break;
-    case STAGE_DONE:
-      pathfind_state = STAGE_ROTATE0;
-      return 1;
-    default:
-      break;
+  case STAGE_ROTATE0:
+    Rotate_To_Ref(turn);
+    pathfind_state = STAGE_FORWARD1;
+    break;
+  case STAGE_FORWARD1:
+    if (Drive_To_Edge()) {
+      pathfind_state = STAGE_ROTATE1;
+    }
+    break;
+  case STAGE_ROTATE1:
+    Rotate_To_Ref(0); // back to the bollard's heading
+    pathfind_state = STAGE_FORWARD2;
+    break;
+  case STAGE_FORWARD2:
+    if (Drive_To_Edge()) {
+      pathfind_state = STAGE_DONE;
+    }
+    break;
+  case STAGE_DONE:
+    pathfind_state = STAGE_ROTATE0;
+    return 1;
+  default:
+    break;
   }
   return 0;
 }
@@ -315,24 +396,24 @@ bool pathfindFSM(void) {
 // PRAJ - Storage FSM, from section 3 into the storage unit.
 bool storageFSM(void) {
   switch (storage_state) {
-    case STORAGE_ORIENT:
-      // Face down-left along the line through the entrance.
-      if (layout == LAYOUT_A) {
-        Rotate_To_Ref(135);
-      } else {
-        Rotate_To_Ref(-135);
-      }
-      storage_state = STORAGE_FORWARD;
-      break;
-    case STORAGE_FORWARD:
-      Kobuki_Drive_Distance_Setpoint(kobuki.distance, STORAGE_LEG);
-      storage_state = STORAGE_DONE;
-      break;
-    case STORAGE_DONE:
-      storage_state = STORAGE_ORIENT;
-      return 1;
-    default:
-      break;
+  case STORAGE_ORIENT:
+    // Face down-left along the line through the entrance.
+    if (layout == LAYOUT_A) {
+      Rotate_To_Ref(135);
+    } else {
+      Rotate_To_Ref(-135);
+    }
+    storage_state = STORAGE_FORWARD;
+    break;
+  case STORAGE_FORWARD:
+    Kobuki_Drive_Distance_Setpoint(kobuki.distance, STORAGE_LEG);
+    storage_state = STORAGE_DONE;
+    break;
+  case STORAGE_DONE:
+    storage_state = STORAGE_ORIENT;
+    return 1;
+  default:
+    break;
   }
   return 0;
 }
@@ -340,46 +421,64 @@ bool storageFSM(void) {
 // PRAJ - Deposit FSM, find the marker and stop DEPOSIT_GAP in front of it.
 bool depositFSM(void) {
   switch (deposit_state) {
-    case DEPOSIT_ALIGN:
-      if (align(DEPOSIT_THRESH)) {
-        if (align_min_d <= US_MIN_RANGE + US_CLOSE_MARGIN) {
-          // Too close to measure: reverse away from the marker (we're facing
-          // it) and sweep again from further back.
-          Kobuki_Drive_Distance_Setpoint(kobuki.distance, -DEPOSIT_BACKUP);
-        } else {
-          deposit_state = DEPOSIT_FORWARD;
-        }
+  case DEPOSIT_ALIGN:
+    if (align(DEPOSIT_THRESH)) {
+      if (align_min_d <= US_MIN_RANGE + US_CLOSE_MARGIN) {
+        // Too close to measure: reverse away from the marker (we're facing
+        // it) and sweep again from further back.
+        Kobuki_Drive_Distance_Setpoint(kobuki.distance, -DEPOSIT_BACKUP);
+      } else {
+        deposit_state = DEPOSIT_FORWARD;
       }
-      break;
-    case DEPOSIT_FORWARD:
-      // Use the closest reading from the sweep: a reading taken right after
-      // the turn can still be stale (sensor latency). Negative = reverse.
-      Kobuki_Drive_Distance_Setpoint(kobuki.distance,
-                                     align_min_d - DEPOSIT_GAP);
-      deposit_state = DEPOSIT_DONE;
-      break;
-    case DEPOSIT_DONE:
-      deposit_state = DEPOSIT_ALIGN;
-      return 1;
-    default:
-      break;
+    }
+    break;
+  case DEPOSIT_FORWARD:
+    // Use the closest reading from the sweep: a reading taken right after
+    // the turn can still be stale (sensor latency). Negative = reverse.
+    Kobuki_Drive_Distance_Setpoint(kobuki.distance, align_min_d - DEPOSIT_GAP);
+    deposit_state = DEPOSIT_DONE;
+    break;
+  case DEPOSIT_DONE:
+    deposit_state = DEPOSIT_ALIGN;
+    return 1;
+  default:
+    break;
+  }
+  return 0;
+}
+
+// Vatsal - Recover FSM, backup and rotate to avoid obstacles.
+bool recoverFSM(void) {
+  switch (recover_state) {
+  case RECOVER_BACKUP:
+    Kobuki_Drive_Distance_Setpoint(kobuki.distance, -100);
+    recover_state = RECOVER_ROTATE;
+    break;
+  case RECOVER_ROTATE:
+    Rotate_To(wrap(kobuki.angle + DEG(recover_turn_deg)));
+    recover_state = RECOVER_DONE;
+    break;
+  case RECOVER_DONE:
+    return 1;
   }
   return 0;
 }
 
 void reset_all_fsms(void) {
-  // Reset all FSM states to their initial values
   align_state = ALIGN_INIT;
   pathfind_state = STAGE_ROTATE0;
   storage_state = STORAGE_ORIENT;
   deposit_state = DEPOSIT_ALIGN;
   edge_correction_deg = 0;
+  recover_state = RECOVER_BACKUP;
+  recover_turn_deg = 0;
 }
 
 // Main function to initialize the robot and run the main loop.
 int main(void) {
-  Kobuki_LED_Enum led_1 = OFF, led_2 = OFF;  // Start LEDS as as off
-  State current_state = IDLE;                // start at IDLE
+  Kobuki_LED_Enum led_1 = OFF, led_2 = OFF; // Start LEDS as as off
+  State current_state = IDLE;               // start at IDLE
+  State return_state = IDLE;                // to return to after recover
 
   // Initialise UART, ADC, and ultrasonic sensor.
   UART_Init();
@@ -391,9 +490,25 @@ int main(void) {
     Kobuki_Read(&kobuki);
     Kobuki_Update_LEDs(led_1, led_2);
 
+    debug_cliff = kobuki.cliff;
+    debug_bumper = kobuki.bumper;
+    debug_wheeldrop = kobuki.wheeldrop;
+    debug_state = current_state; // Store the current state for debugging
+    debug_align_state = align_state;
+    debug_pathfind_state = pathfind_state;
+    debug_storage_state = storage_state;
+    debug_deposit_state = deposit_state;
+    debug_recover_state = recover_state;
+
     // Immediately stop on button 1 or wheel drop.
-    if (kobuki.button & BUTTON_1_STOP || kobuki.wheeldrop != 0) {
+    if ((kobuki.button & BUTTON_1_STOP) || (kobuki.wheeldrop != 0)) {
       current_state = IDLE;
+      reset_all_fsms();
+      led_2 = RED; // red while stopped
+    }
+
+    if ((kobuki.button & BUTTON_2)) {
+      current_state = PATHFIND;
     }
 
     // Let any drive or rotation in progress finish before the next step.
@@ -402,46 +517,74 @@ int main(void) {
       continue;
     }
 
+    if (current_state != IDLE && current_state != RECOVER &&
+        (kobuki.bumper != 0 || kobuki.cliff != 0)) {
+      Kobuki_Stop();
+
+      if ((kobuki.bumper & SENSOR_LEFT) || (kobuki.cliff & SENSOR_LEFT)) {
+        recover_turn_deg = -20;
+      } else if ((kobuki.bumper & SENSOR_RIGHT) ||
+                 (kobuki.cliff & SENSOR_RIGHT)) {
+        recover_turn_deg = 20;
+      } else {
+        recover_turn_deg = 30;
+      }
+      debug_recover_turn_deg = recover_turn_deg;
+      recover_state = RECOVER_BACKUP;
+      return_state = current_state;
+      current_state = RECOVER;
+    }
+
     switch (current_state) {
-      case IDLE:
-        Kobuki_Stop();
-        reset_all_fsms();
-        led_1 = OFF;
-        if (kobuki.button & BUTTON_0_START) {
-          current_state = SEARCH;
-          led_1 = RED;  // red while running
+    case IDLE:
+      Kobuki_Stop();
+      reset_all_fsms();
+      led_1 = OFF;
+      if (kobuki.button & BUTTON_0_START) {
+        current_state = SEARCH;
+        led_1 = RED; // red while running
+      }
+      debug_d = Ultrasonic_Read() + TOTAL_CALIBRATION;
+      break;
+    case SEARCH: // Align with the blocking bollard, its distance gives
+                 // the layout.
+      if (align(SEARCH_THRESH)) {
+        headingRef = align_theta;
+        if (align_min_d > LAYOUT_SPLIT) {
+          layout = LAYOUT_A;
+        } else {
+          layout = LAYOUT_B;
         }
-        break;
-      case SEARCH:  // Align with the blocking bollard, its distance gives
-                    // the layout.
-        if (align(SEARCH_THRESH)) {
-          headingRef = align_theta;
-          if (align_min_d > LAYOUT_SPLIT) {
-            layout = LAYOUT_A;
-          } else {
-            layout = LAYOUT_B;
-          }
-          current_state = PATHFIND;
-        }
-        break;
-      case PATHFIND:
-        if (pathfindFSM()) {
-          current_state = STORAGE;
-        }
-        break;
-      case STORAGE:
-        if (storageFSM()) {
-          current_state = DEPOSIT;
-        }
-        break;
-      case DEPOSIT:
-        if (depositFSM()) {
-          current_state = IDLE;  // Finished
-        }
-        break;
-      default:
-        current_state = IDLE;
-        break;
+        debug_layout = layout; // Store the current layout state for debugging
+        current_state = PATHFIND;
+      }
+      break;
+    case PATHFIND:
+      if (pathfindFSM()) {
+        current_state = STORAGE;
+      }
+      break;
+    case STORAGE:
+      if (storageFSM()) {
+        current_state = DEPOSIT;
+      }
+      break;
+    case DEPOSIT:
+      if (depositFSM()) {
+        current_state = IDLE; // Finished
+      }
+      break;
+    default:
+      current_state = IDLE;
+      break;
+
+    case RECOVER:
+
+      if (recoverFSM()) {
+        current_state = return_state;
+      }
+
+      break;
     }
   }
 }
