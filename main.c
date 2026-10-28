@@ -17,7 +17,7 @@
 #define BUTTON_2 0x04U       // Button 2 is pressed
 
 // Calibration value for the ultrasonic sensor
-#define ULTRASONIC_CALIBRATION 55
+#define ULTRASONIC_CALIBRATION 35
 #define FRONT_LENGTH 245 // Length of the front of the robot
 #define TOTAL_CALIBRATION                                                      \
   (ULTRASONIC_CALIBRATION -                                                    \
@@ -31,8 +31,8 @@
 #define DEPOSIT_THRESH                                                         \
   260 // markers in the storage are close around 140 mm; A2/B2 outside the unit
       // at around 370 mm. Choose 260 mm.
-#define ALIGN_OFFSET DEG(16) // sensor latency makes the sweep centre late
-#define DEPOSIT_GAP 100      // stop this far from the deposit marker
+#define ALIGN_OFFSET DEG(9) // sensor latency makes the sweep centre late
+#define DEPOSIT_GAP 90     // stop this far from the deposit marker
 
 // The ultrasonic sensor minimum range of 300mm. Anything close gets clamped.
 // This is important in deposit state, where if we are too close (15mm) to
@@ -113,6 +113,7 @@ typedef enum {
 typedef enum {
   DEPOSIT_ALIGN,
   DEPOSIT_FORWARD,
+  DEPOSIT_BACK,
   DEPOSIT_DONE
 } DEPOSITstate; // Enum to represent the deposit states
 
@@ -122,6 +123,8 @@ typedef enum { RECOVER_BACKUP, RECOVER_ROTATE, RECOVER_DONE } RECOVERState;
 
 // for debugging purposes
 volatile int16_t debug_d;
+volatile int16_t debug_align_min_d;
+volatile int16_t debug_deposit_d;
 
 volatile State debug_state;
 volatile ALIGNstate debug_align_state;
@@ -211,7 +214,7 @@ bool align(int16_t distanceThresh) {
   static int32_t thetaLeft, thetaRight;
 
   int16_t d = Ultrasonic_Read() + TOTAL_CALIBRATION;
-  debug_d = d;
+  // debug_d = d;
   debug_align_state = align_state;
 
   switch (align_state) {
@@ -236,7 +239,6 @@ bool align(int16_t distanceThresh) {
     if (d <= distanceThresh) {
       thetaLeft = kobuki.angle;
       debug_thetaLeft_deg = thetaLeft * DEG_PER_TICK;
-
       align_min_d = d;
       align_state = ALIGN_RIGHT;
     } else {
@@ -248,6 +250,7 @@ bool align(int16_t distanceThresh) {
     if (d <= distanceThresh) {
       if (d < align_min_d) {
         align_min_d = d;
+        debug_align_min_d = align_min_d;
       }
       Kobuki_Rotate(SEARCH_SPEED);
     } else {
@@ -420,6 +423,8 @@ bool storageFSM(void) {
 
 // PRAJ - Deposit FSM, find the marker and stop DEPOSIT_GAP in front of it.
 bool depositFSM(void) {
+  volatile int16_t deposit_d = 0;
+  deposit_d = Ultrasonic_Read() + TOTAL_CALIBRATION;
   switch (deposit_state) {
   case DEPOSIT_ALIGN:
     if (align(DEPOSIT_THRESH)) {
@@ -427,16 +432,30 @@ bool depositFSM(void) {
         // Too close to measure: reverse away from the marker (we're facing
         // it) and sweep again from further back.
         Kobuki_Drive_Distance_Setpoint(kobuki.distance, -DEPOSIT_BACKUP);
+        deposit_state = DEPOSIT_BACK;
       } else {
+        deposit_d = align_min_d;
         deposit_state = DEPOSIT_FORWARD;
       }
     }
     break;
+  case DEPOSIT_BACK:
+    
+    debug_deposit_d = deposit_d;
+    if (deposit_d <= US_MIN_RANGE + US_CLOSE_MARGIN) {
+      Kobuki_Drive_Distance_Setpoint(kobuki.distance, -DEPOSIT_BACKUP);
+    } else {
+      deposit_state = DEPOSIT_FORWARD;
+    }
+    break;
   case DEPOSIT_FORWARD:
+    Kobuki_Drive_Distance_Setpoint(kobuki.distance, deposit_d - DEPOSIT_GAP);
     // Use the closest reading from the sweep: a reading taken right after
     // the turn can still be stale (sensor latency). Negative = reverse.
-    Kobuki_Drive_Distance_Setpoint(kobuki.distance, align_min_d - DEPOSIT_GAP);
+    // Kobuki_Drive_Distance_Setpoint(kobuki.distance, align_min_d -
+    // DEPOSIT_GAP);
     deposit_state = DEPOSIT_DONE;
+    return 0;
     break;
   case DEPOSIT_DONE:
     deposit_state = DEPOSIT_ALIGN;
@@ -508,7 +527,7 @@ int main(void) {
     }
 
     if ((kobuki.button & BUTTON_2)) {
-      current_state = PATHFIND;
+      current_state = DEPOSIT;
     }
 
     // Let any drive or rotation in progress finish before the next step.
@@ -517,9 +536,9 @@ int main(void) {
       continue;
     }
 
-    if (current_state != IDLE && current_state != RECOVER &&
-        (kobuki.bumper != 0 || kobuki.cliff != 0)) {
-      Kobuki_Stop();
+    if (current_state != IDLE && current_state != pathfind_state &&
+        current_state != RECOVER && (kobuki.bumper != 0 || kobuki.cliff != 0)) {
+      // Kobuki_Stop();
 
       if ((kobuki.bumper & SENSOR_LEFT) || (kobuki.cliff & SENSOR_LEFT)) {
         recover_turn_deg = -20;
@@ -532,9 +551,9 @@ int main(void) {
       debug_recover_turn_deg = recover_turn_deg;
       recover_state = RECOVER_BACKUP;
       return_state = current_state;
-      current_state = RECOVER;
+      // current_state = RECOVER;
     }
-
+    debug_d = Ultrasonic_Read() + TOTAL_CALIBRATION;
     switch (current_state) {
     case IDLE:
       Kobuki_Stop();
@@ -544,7 +563,7 @@ int main(void) {
         current_state = SEARCH;
         led_1 = RED; // red while running
       }
-      debug_d = Ultrasonic_Read() + TOTAL_CALIBRATION;
+
       break;
     case SEARCH: // Align with the blocking bollard, its distance gives
                  // the layout.
