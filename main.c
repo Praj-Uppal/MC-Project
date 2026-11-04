@@ -11,7 +11,7 @@
 
 #define DEG_PER_TICK \
   (1.0 / 100.0)  // 0.01 degrees per gyroscope tick. (degrees goes from -180 to
-                 // +180, and encoder produces -18000 to 18000)
+                 // +180, and gyroscope produces -18000 to 18000)
 #define DEGTOTICK(x) \
   ((int32_t)(x) * 100)  // Define macro to convert degrees to gyro ticks
 
@@ -36,19 +36,20 @@
 
 // align() detection thresholds (calibrated in mm)
 #define SEARCH_THRESH \
-  500  // bollard A1 is 360 mm from start, B1  is 210 mm. We chose a detection
-       // range that picks up both while not picking up deposit or other
-       // bollards, as they are over 500 away. Going lower than this results in
-       // some cases where the starting bollards not detected (random variance
-       // in begining position).
+  500  // bollard A1 is around 375 mm from start, B1  is 225 mm. We chose a
+       // detection range that picks up both while not picking up deposit or
+       // other bollards, as they are over 500 away. Going lower than this
+       // results in some cases where the starting bollards not detected (random
+       // variance in begining position).
 
 #define LAYOUT_MIDPOINT \
-  285  // halfway between A1(360 mm) and B1 (210 mm). If larger than this,
-       // layout A; if lower, then layout B.
+  285  // Try to set between halfway of layout A detected bollard (A1) and
+       // layout B first detected bollard (B1). From our testing, 285 worked.
+       // If distance above, we are in layout A else if below, layout B.
 
-#define DEPOSIT_THRESH \
-  260  // markers in the storage are around 140 mm; A2/B2 outside the unit
-       // at around 370 mm. Pick a search range in the middle around 250-260mm.
+#define DEPOSIT_THRESH 260  // markers in the storage are around 140 mm.
+//  A2/B2 outside the unit at around 400 ish mm. Pick a search threshold which
+//  doesnt detect those.
 #define ALIGN_OFFSET \
   DEGTOTICK(9)  // sensor latency or command delay makes the sweep centre rotate
                 // more
@@ -100,12 +101,6 @@
 #define CORRECTION_DEG 5
 // Also the same for both layouts.
 
-// lengths of the different paths (mm).
-// Both layouts end at the same spot in section 3, and so they must traverse the
-// horizontal and vertical paths.
-#define HORIZONTAL 1180
-#define VERTICAL 1380
-
 #define STORAGE_ENTRY \
   920  // to the point equidistant from D1 and D2 at the centre of storage.
        // Using pythagoras, this was 918.4mm and so ~920mm, from section 3
@@ -123,12 +118,10 @@ typedef enum {
   PATHFIND,
   STORAGE,
   DEPOSIT,
-  RECOVER
 } State;  // Enum to represent the different states of the robot
 
 typedef enum {
   ALIGN_INIT,
-  ALIGN_TURNOUT,
   ALIGN_LEFT,
   ALIGN_RIGHT,
   ALIGN_ALIGNING,
@@ -136,9 +129,9 @@ typedef enum {
 } ALIGNstate;  // Enum to represent the alignment states
 
 typedef enum {
-  STAGE_ROTATE0,
-  STAGE_FORWARD1,
   STAGE_ROTATE1,
+  STAGE_FORWARD1,
+  STAGE_ROTATE2,
   STAGE_FORWARD2,
   STAGE_DONE
 } PFstate;  // Enum to represent the pathfinding states
@@ -156,8 +149,6 @@ typedef enum {
   DEPOSIT_DONE
 } DEPOSITstate;  // Enum to represent the deposit states
 
-typedef enum { RECOVER_BACKUP, RECOVER_ROTATE, RECOVER_DONE } RECOVERState;
-
 // Global variables
 
 // debugging variables
@@ -170,7 +161,6 @@ volatile ALIGNstate debug_align_state;
 volatile PFstate debug_pathfind_state;
 volatile STORAGEstate debug_storage_state;
 volatile DEPOSITstate debug_deposit_state;
-volatile RECOVERState debug_recover_state;
 
 volatile int32_t debug_thetaRight_deg;
 volatile int32_t debug_thetaLeft_deg;
@@ -191,12 +181,12 @@ volatile Kobuki_Typedef
 
 // FSM state variables (global scope so reset_all_fsms() can reach them as well)
 volatile static ALIGNstate align_state = ALIGN_INIT;
-volatile static PFstate pathfind_state = STAGE_ROTATE0;
+volatile static PFstate pathfind_state = STAGE_ROTATE1;
 volatile static STORAGEstate storage_state = STORAGE_ORIENT;
 volatile static DEPOSITstate deposit_state = DEPOSIT_ALIGN;
 
 // Results from the last align sweep. Distance to closest object in
-// align_min_d, absolute heading in encoder ticks [-18000,18000] to object in
+// align_min_d, absolute heading in gyroscope ticks [-18000,18000] to object in
 // align_theta.
 volatile static int16_t align_min_d;
 volatile static int32_t align_theta;
@@ -222,10 +212,10 @@ int32_t wrap(int32_t angle) {
   return angle;
 }
 
-// Start a rotation to an absolute heading in ticks. Calculated the difference
-// in ticks between desired heading, and current heading. Then commands a
-// rotation based off this difference. All turns are set through this and
-// MotionUpdate() then drives it to completion.
+// Start a rotation to an absolute heading based on gyroscope in ticks.
+// Calculated the difference in ticks between desired heading, and current
+// heading. Then commands a rotation based off this difference. All turns are
+// set through this and MotionUpdate() then drives it to completion.
 // Praj
 void setRotation(int32_t targetAngle) {
   int32_t relativeDifference = wrap(targetAngle - kobuki.angle);
@@ -260,7 +250,7 @@ bool MotionUpdate(void) {
 }
 
 // Praj
-// Sweep CCW until an object within distanceThresh (calibrated mm) enters and
+// Sweep ACW until an object within distanceThresh (calibrated mm) enters and
 // leaves the beam, then turn to its centre. Essentially identical to the flow
 // chart provided in the hint/help file for this project. Records the minimum
 // distance to object in align_min_d and, its angle in align_theta. returns 1
@@ -271,18 +261,15 @@ bool MotionUpdate(void) {
 //  This is to prevent the incorrect angle being computed as theta left and
 //  theta right need to be the left and right side of objects, not somewhere in
 //  the middle.
-// After moving out of LOS, start scan for theta left, angle to left edge.
-// After getting theta left, continue sweeping to get theta right.
+// After moving out of LOS, start scan for theta right, angle of right edge.
+// After getting theta right, continue sweeping to get theta left.
 // As scanning, keep track of minimum detected distance to object. Theoretically
 // this may not work with different shaped bollards (like triangle) but fine for
 // cylinder. After finding both edges, compute the average, and store in
 // align_theta, and align using it. Once done, return 1.
 
-// Note in practice, we were rotating ACW (we assumed CW rotation from simulator
-// which turned out to be wrong), so actually theta left was detecting the right
-// edge, and theta right was detecting the left edge. This does not affect the
-// align operation, simply flips the naming convention (align left is actually
-// align right, theta left is theta right and so on).
+// Note in practice, we were rotating ACW so actually theta right is detected
+// first and then theta left unlike the flow chart provided.
 
 bool align(int16_t distanceThresh) {
   // Initialise left, and right theta. Theta_avg stored in align_theta since
@@ -304,20 +291,19 @@ bool align(int16_t distanceThresh) {
         // Rotate out of the way. It will keep rotating 45 degrees until its not
         // in LOS.
         setRotation(wrap(kobuki.angle + DEGTOTICK(45)));
-      } else {  // If out of LOS, enter align_left to detect left theta.
-        align_state = ALIGN_LEFT;
+      } else {  // If out of LOS, enter align_right to detect right theta.
+        align_state = ALIGN_RIGHT;
       }
       break;
-    case ALIGN_LEFT:
+    case ALIGN_RIGHT:
       // Keep turning until the object enters the beam.
       if (d <= distanceThresh) {
-        // Once object detected, store current angle in theta_left
-        thetaLeft = kobuki.angle;
+        // Once object detected, store current angle in theta_rigth
+        thetaRight = kobuki.angle;
         // Debug
-        // debug_thetaLeft_deg = thetaLeft * DEG_PER_TICK;
-        // Update minimum distance, and enter align_right state.
+        // Update minimum distance, and enter align_left state.
         align_min_d = d;
-        align_state = ALIGN_RIGHT;
+        align_state = ALIGN_LEFT;
       } else {
         // If not detected continue rotating. Rotating using kobuki_rotate
         // directly as we havent defined our reference heading yet. Also could
@@ -326,21 +312,19 @@ bool align(int16_t distanceThresh) {
         Kobuki_Rotate(SEARCH_SPEED);
       }
       break;
-    case ALIGN_RIGHT:
+    case ALIGN_LEFT:
       // Keep turning until it leaves the beam, tracking the closest reading.
       if (d <= distanceThresh)  // If detected
       {
         // Update minimum distance if lower.
         if (d < align_min_d) {
           align_min_d = d;
-          // debug_align_min_d = align_min_d;
         }
         // Continue sweeping.
         Kobuki_Rotate(SEARCH_SPEED);
       } else {  // Once object out of LOS
-        // Store theta right.
-        thetaRight = kobuki.angle;
-        // debug_thetaRight_deg = thetaRight * DEG_PER_TICK;
+        // Store theta left.
+        thetaLeft = kobuki.angle;
         // Stop rotation.
         Kobuki_Rotate(STOP);
         // Enter alignment state.
@@ -351,10 +335,7 @@ bool align(int16_t distanceThresh) {
       // Turn to the middle of the two detected angles minus the align offset.
       // Using wrap to wrap angles into the tick range. Computed in ticks.
       align_theta =
-          wrap(thetaLeft + wrap(thetaRight - thetaLeft) / 2 - ALIGN_OFFSET);
-
-      // debug_thetaTarget_deg = align_theta * DEG_PER_TICK;
-      // debug_span = wrap(thetaRight - thetaLeft);
+          wrap(thetaRight + wrap(thetaLeft - thetaRight) / 2 - ALIGN_OFFSET);
 
       // Now we can use setRotation to rotate to an absolute angle and align
       // with object heading.
@@ -448,7 +429,7 @@ bool pathfindFSM(void) {
 
   // FSM
   switch (pathfind_state) {
-    case STAGE_ROTATE0:  // Initial rotation; Occurs when facing Bollard 1
+    case STAGE_ROTATE1:  // Initial rotation; Occurs when facing Bollard 1
       // Rotate based on the turn degrees decided above with respect to
       // reference.
       setRotation_Ref(turn);
@@ -459,10 +440,10 @@ bool pathfindFSM(void) {
       // Once rotation complete, drive to the edge.
       if (Drive_To_Edge()) {
         // Once driven to edge and in corner, enter second rotation stage.
-        pathfind_state = STAGE_ROTATE1;
+        pathfind_state = STAGE_ROTATE2;
       }
       break;
-    case STAGE_ROTATE1:
+    case STAGE_ROTATE2:
       // align back to bollards heading. This works for both layouts.
       setRotation_Ref(0);
       // Enter next stage.
@@ -479,7 +460,7 @@ bool pathfindFSM(void) {
       // Reset the pathfind_state variable to initial, and return 1 for
       // succeess. This occurs after backoff has finished since motion update
       // does not allow us to enter in middle of update.
-      pathfind_state = STAGE_ROTATE0;
+      pathfind_state = STAGE_ROTATE1;
       return 1;
     default:
       break;
@@ -538,13 +519,12 @@ bool depositFSM(void) {
           deposit_state = DEPOSIT_BACK;
         } else {  // If align distance above close margin, enter drive forward
                   // state.
-          // deposit_d = align_min_d;
+          deposit_d = align_min_d;
           deposit_state = DEPOSIT_FORWARD;
         }
       }
       break;
     case DEPOSIT_BACK:
-
       // debug_deposit_d = deposit_d;
       // If deposit is still too close.
       // The robot still remains aligned.
@@ -579,7 +559,7 @@ bool depositFSM(void) {
 // Vatsal
 void reset_all_fsms(void) {
   align_state = ALIGN_INIT;
-  pathfind_state = STAGE_ROTATE0;
+  pathfind_state = STAGE_ROTATE1;
   storage_state = STORAGE_ORIENT;
   deposit_state = DEPOSIT_ALIGN;
   edge_correction_deg = 0;
@@ -643,6 +623,7 @@ int main(void) {
         if (kobuki.button & BUTTON_0_START) {
           current_state = SEARCH;
           led_1 = RED;  // red while running
+          led_2 = OFF;  // Turn off led2
         }
 
         break;
