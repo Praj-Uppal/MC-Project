@@ -12,13 +12,13 @@
 #define DEG_PER_TICK \
   (1.0 / 100.0)  // 0.01 degrees per gyroscope tick. (degrees goes from -180 to
                  // +180, and gyroscope produces -18000 to 18000)
-#define DEGTOTICK(x) \
+#define DEG_TO_TICK(x) \
   ((int32_t)(x) * 100)  // Define macro to convert degrees to gyro ticks
 
 // Button presses recorded in a three bits 0bxxx, each bit for one button.
-#define BUTTON_0_START 0x01U  // Button 0 is pressed (bit 0)
-#define BUTTON_1_STOP 0x02U   // Button 1 is pressed (bit 1)
-#define BUTTON_2 0x04U        // Button 2 is pressed (bit 2)
+#define BUT0 0x01U  // Button 0 is pressed (bit 0)
+#define BUT1 0x02U  // Button 1 is pressed (bit 1)
+#define BUT2 0x04U  // Button 2 is pressed (bit 2)
 
 // Calibration value for the ultrasonic sensor. Calibrated at start of practical
 // through testing.
@@ -51,11 +51,11 @@
 //  A2/B2 outside the unit at around 400 ish mm. Pick a search threshold which
 //  doesnt detect those.
 #define ALIGN_OFFSET \
-  DEGTOTICK(9)  // sensor latency or command delay makes the sweep centre rotate
-                // more
+  DEG_TO_TICK(9)  // sensor latency or command delay makes the sweep centre
+                  // rotate more
 // than intended. We had to subtract an offset angle to make it align
 // correctly. Determined to be 9 degrees from align testing.
-// Putting in DEGTOTICK converts this to ticks.
+// Putting in DEG_TO_TICK converts this to ticks.
 #define DEPOSIT_GAP \
   90  // intended gap from bollards. Set to 90 mm, as the robot was already
       // stopping further away than intended.
@@ -64,11 +64,11 @@
 // robot) with anything closer getting clamped to this value. This is important
 // in deposit state, where if we are too close (15mm) to bollard it reads as
 // 300. Need to back up first, then remeasure.
-#define US_MIN_RANGE \
+#define ULTRASONIC_MIN \
   (300 + TOTAL_CALIBRATION)  // calibrated range. (From front of robot, this is
                              // the minimum range)
-#define US_CLOSE_MARGIN 15   // Close margin. Set to 15mm from experimentation.
-#define DEPOSIT_BACKUP 100   // distance to backup from bollard in this case.
+#define DETECT_MARGIN 15     // Close margin. Set to 15mm from experimentation.
+#define DEPOSIT_REVERSE 100  // distance to backup from bollard in this case.
 
 // Cliff and bumper bits, read as 0bLCR (same layout for kobuki.cliff and
 // kobuki.bumper). Identical to the button, but directions (left and right) may
@@ -85,10 +85,10 @@
 // are 400 by 400, we want to be in the centreish so we want to be around ~200
 // away from edge)
 
-#define EDGE_SPEED \
+#define SPEED \
   ((int16_t)100)  // speed while looking for the edge. Can be sped up, we kept
                   // it relatively slow to minimise errors from slip, etc.
-#define EDGE_BACKOFF 40  // backoff distance.
+#define FRONT_REVERSE 40  // backoff distance.
 
 // Course correction: one of the side cliff sensors right or left triggering on
 // its own means the robot has drifted towards the edge off the course. Back off
@@ -97,7 +97,7 @@
 // depending on the triggered bumper, back off, and turn a correction angle
 // towards centre. Depedning on if left bumper or right bumper, turn CW or ACW.
 // Centre handled differently.
-#define SIDE_BACKOFF 30  // mm
+#define SIDE_REVERSE 30  // mm
 #define CORRECTION_DEG 5
 // Also the same for both layouts.
 
@@ -197,7 +197,7 @@ volatile static int32_t align_theta;
 volatile static int32_t headingRef;
 
 // course-correction turn (degrees) from Drive_To_Edge().
-volatile static int16_t edge_correction_deg;
+volatile static int16_t edge_correction;
 
 // Functions
 
@@ -226,7 +226,7 @@ void setRotation(int32_t targetAngle) {
 // Helper to rotate with respect to the reference heading based on degrees.
 // Vatsal
 void setRotation_Ref(int16_t offset) {
-  setRotation(wrap(headingRef + DEGTOTICK(offset)));
+  setRotation(wrap(headingRef + DEG_TO_TICK(offset)));
 }
 
 // Keep the current drive or rotation moving. returns 1 while motion pending,
@@ -290,7 +290,7 @@ bool align(int16_t distanceThresh) {
       if (d <= distanceThresh) {
         // Rotate out of the way. It will keep rotating 45 degrees until its not
         // in LOS.
-        setRotation(wrap(kobuki.angle + DEGTOTICK(45)));
+        setRotation(wrap(kobuki.angle + DEG_TO_TICK(45)));
       } else {  // If out of LOS, enter align_right to detect right theta.
         align_state = ALIGN_RIGHT;
       }
@@ -363,11 +363,11 @@ bool align(int16_t distanceThresh) {
 // Vatsal
 bool Drive_To_Edge(void) {
   // If edge correction from last loop.
-  if (edge_correction_deg != 0) {
+  if (edge_correction != 0) {
     // Rotate edge correction amount from current heading.
-    setRotation(wrap(kobuki.angle + DEGTOTICK(edge_correction_deg)));
+    setRotation(wrap(kobuki.angle + DEG_TO_TICK(edge_correction)));
     // Reset edge correction.
-    edge_correction_deg = 0;
+    edge_correction = 0;
     // return.
     return 0;
   }
@@ -375,7 +375,7 @@ bool Drive_To_Edge(void) {
   // If no bumper or cliff sensors triggered, continue going forward
   if (kobuki.cliff == 0 && kobuki.bumper == 0) {
     // Drive forward
-    Kobuki_Drive(EDGE_SPEED);
+    Kobuki_Drive(SPEED);
     return 0;
   }
 
@@ -385,22 +385,22 @@ bool Drive_To_Edge(void) {
   // sensor, 0bxxx) If left sensor triggered, need to rotate CW.
   if (kobuki.cliff == SENSOR_LEFT || kobuki.bumper == SENSOR_LEFT) {
     // back off by side_backoff amount.
-    Kobuki_Drive_Distance_Setpoint(kobuki.distance, -SIDE_BACKOFF);
+    Kobuki_Drive_Distance_Setpoint(kobuki.distance, -SIDE_REVERSE);
     // Seperate into two steps to ensure that rotation and distance motion not
     // occur simultaneosuly. Edge correction occurs in next loop after backed
     // off is finished. Theoretically with how motionupdate works, we could
     // probably set the rotation here, as distance takes precedence over
     // rotations anyways. But better to seperate like this just in case.
     // Negative correction as negative corresponds to CW
-    edge_correction_deg = -CORRECTION_DEG;
+    edge_correction = -CORRECTION_DEG;
     return 0;
   }
   // If right sensor triggered, need to rotate ACW
   if (kobuki.cliff == SENSOR_RIGHT || kobuki.bumper == SENSOR_RIGHT) {
     // Back off.
-    Kobuki_Drive_Distance_Setpoint(kobuki.distance, -SIDE_BACKOFF);
+    Kobuki_Drive_Distance_Setpoint(kobuki.distance, -SIDE_REVERSE);
     // Set rotation. Positive edge correction as adding is ACW.
-    edge_correction_deg = CORRECTION_DEG;
+    edge_correction = CORRECTION_DEG;
     return 0;
   }
 
@@ -408,7 +408,7 @@ bool Drive_To_Edge(void) {
   // cliff/bumpers). Edge is ahead of us meaning we have finished driving to
   // edge. A centre bump means something is directly ahead, so stop here as well
   // rather than push into it. This shouldnt happen during the course though.
-  Kobuki_Drive_Distance_Setpoint(kobuki.distance, -EDGE_BACKOFF);
+  Kobuki_Drive_Distance_Setpoint(kobuki.distance, -FRONT_REVERSE);
   // Return 1 to indicate complete.
   return 1;
 }
@@ -503,7 +503,7 @@ bool storageFSM(void) {
 // Vatsal - Deposit FSM, find the marker and stop DEPOSIT_GAP in front of it.
 bool depositFSM(void) {
   // Read US reading.
-  volatile int16_t deposit_d = 0;
+  static volatile int16_t deposit_d = 0;
   deposit_d = Ultrasonic_Read() + TOTAL_CALIBRATION;
   switch (deposit_state) {
       // Align with bollard
@@ -511,10 +511,7 @@ bool depositFSM(void) {
       if (align(DEPOSIT_THRESH))  // If align finished
       {
         // If align distance below the close margin (i.e too close to bollard)
-        if (align_min_d <= US_MIN_RANGE + US_CLOSE_MARGIN) {
-          // Too close to measure: reverse away from the marker (we're facing
-          // it)
-          Kobuki_Drive_Distance_Setpoint(kobuki.distance, -DEPOSIT_BACKUP);
+        if (align_min_d <= ULTRASONIC_MIN + DETECT_MARGIN) {
           // Enter back case
           deposit_state = DEPOSIT_BACK;
         } else {  // If align distance above close margin, enter drive forward
@@ -526,11 +523,12 @@ bool depositFSM(void) {
       break;
     case DEPOSIT_BACK:
       // debug_deposit_d = deposit_d;
-      // If deposit is still too close.
+      // If deposit is too close.
       // The robot still remains aligned.
-      if (deposit_d <= US_MIN_RANGE + US_CLOSE_MARGIN) {
-        // Continue reversing by backup amount.
-        Kobuki_Drive_Distance_Setpoint(kobuki.distance, -DEPOSIT_BACKUP);
+      if (deposit_d <= ULTRASONIC_MIN + DETECT_MARGIN) {
+        // Too close to measure: reverse away from the marker (we're facing
+        // it)
+        Kobuki_Drive_Distance_Setpoint(kobuki.distance, -DEPOSIT_REVERSE);
       } else {  // If sufficiently far, enter forward state.
         deposit_state = DEPOSIT_FORWARD;
       }
@@ -562,7 +560,7 @@ void reset_all_fsms(void) {
   pathfind_state = STAGE_ROTATE1;
   storage_state = STORAGE_ORIENT;
   deposit_state = DEPOSIT_ALIGN;
-  edge_correction_deg = 0;
+  edge_correction = 0;
 }
 
 // All of us
@@ -592,7 +590,7 @@ int main(void) {
      debug_deposit_state = deposit_state;
     */
     // Immediately stop on button 1 or wheel drop.
-    if ((kobuki.button & BUTTON_1_STOP) || (kobuki.wheeldrop != 0)) {
+    if ((kobuki.button & BUT1) || (kobuki.wheeldrop != 0)) {
       // Reset current_state
       current_state = IDLE;
       reset_all_fsms();  // Reset all FSMs
@@ -600,7 +598,7 @@ int main(void) {
     }
 
     // For debugging
-    // if ((kobuki.button & BUTTON_2))
+    // if ((kobuki.button & BUT2))
     // {
     //  current_state = DEPOSIT;
     //}
@@ -620,7 +618,7 @@ int main(void) {
         // Reset FSMs if needed.
         reset_all_fsms();
         led_1 = OFF;  // Deactivate LED
-        if (kobuki.button & BUTTON_0_START) {
+        if (kobuki.button & BUT0) {
           current_state = SEARCH;
           led_1 = RED;  // red while running
           led_2 = OFF;  // Turn off led2
@@ -654,7 +652,7 @@ int main(void) {
         }
         break;
       case STORAGE:
-        // If storage has finished, we are in the centre of the storage box.
+        // If storage has finished, we are at the centre of the storage box.
         if (storageFSM()) {
           // update to deposit state.
           current_state = DEPOSIT;
