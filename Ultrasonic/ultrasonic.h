@@ -1,3 +1,8 @@
+/*
+  A1925661 - Prajwal Uppal
+  A1924760 - Vatsal J Thakkar
+  A1926225 - Joshua Bonython
+*/
 #ifndef ULTRASONIC_H
 #define ULTRASONIC_H
 #include <stdint.h>
@@ -11,6 +16,6 @@ typedef struct {
 
 void Ultrasonic_Init(void);
 uint16_t Ultrasonic_Read(void);
-void Ultrasonic_Detect(US_Typedef *object);
+void Ultrasonic_Detect(US_Typedef* object);
 
 #endif

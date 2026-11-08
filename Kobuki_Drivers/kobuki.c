@@ -1,3 +1,8 @@
+/*
+  A1925661 - Prajwal Uppal
+  A1924760 - Vatsal J Thakkar
+  A1926225 - Joshua Bonython
+*/
 #include "kobuki.h"
 
 #include <stdlib.h>  // include this at the top
@@ -84,9 +89,8 @@ void Kobuki_Rotate_Angle(int16_t current_angle_tick) {
   // Check for non - optimal rotation angle
   if (abs(error) > 180) {
     // Always rotate with the minimum angle e.g. +270 -> -90.
-    // Introduces singularity - loses sign and truncates error.
     error = -sign(error) * (abs(error) % 180);
-    // Special cases in circular buffer . Offset to correct error.
+    // Special cases. Offset to correct error.
     if ((error < 0) && (current_angle_deg < setpoint_angle_deg)) {
       error = -(error + 180);
     } else if ((error > 0) && (current_angle_deg > setpoint_angle_deg)) {
@@ -144,8 +148,6 @@ void Kobuki_Update_LEDs(Kobuki_LED_Enum led_1_colour,
 }
 
 void Kobuki_Drive(int16_t speed) {
-  uint8_t speed_lsb = 0;
-  uint8_t speed_msb = 0;
   // Construct payload
   uint8_t payload[] = {0x01, 0x04, 0x32, 0xC8, 0x00, 0x00};
   // saturation to avoid going over speed limit
@@ -162,8 +164,6 @@ void Kobuki_Drive(int16_t speed) {
 }
 
 void Kobuki_Rotate(int16_t speed) {
-  uint8_t speed_lsb = 0;
-  uint8_t speed_msb = 0;
   // Construct payload
   uint8_t payload[] = {0x01, 0x04, 0x32, 0xC8, 0x01, 0x00};
   // saturation to avoid going over speed limit

@@ -1,3 +1,8 @@
+/*
+  A1925661 - Prajwal Uppal
+  A1924760 - Vatsal J Thakkar
+  A1926225 - Joshua Bonython
+*/
 #ifndef ADC_H
 #define ADC_H
 #include <stdint.h>

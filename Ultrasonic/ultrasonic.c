@@ -1,3 +1,8 @@
+/*
+  A1925661 - Prajwal Uppal
+  A1924760 - Vatsal J Thakkar
+  A1926225 - Joshua Bonython
+*/
 
 #include <stdint.h>
 #define STM32G474xx
@@ -19,20 +24,19 @@ uint16_t Ultrasonic_Read(void) {
   uint16_t adc_value = ADC_Read(ULTRASONIC_CHANNEL);
   uint32_t distance_mm =
       ((uint32_t)adc_value * MB1043_FULL_SCALE_MM + ADC_MAX_VALUE / 2UL) /
-      ADC_MAX_VALUE; // The inner division is 7167 / 4095, which
-                     // integer-truncates to 1. The result is distance_mm =
-                     // adc_value. For the MB1043, the true scale is adc * 5120
-                     // / 4095, about ×1.25, so every reading is roughly 20%
-                     // low.
+      ADC_MAX_VALUE;  // The inner division is 7167 / 4095, which
+                      // integer-truncates to 1. The result is distance_mm =
+                      // adc_value. For the MB1043, the true scale is adc * 5120
+                      // / 4095, about ×1.25, so every reading is roughly 20%
+                      // low.
   if (distance_mm > ULTRASONIC_MAX_RANGE_MM) {
     distance_mm = ULTRASONIC_MAX_RANGE_MM;
   }
   return (uint16_t)distance_mm;
 }
 
-void Ultrasonic_Detect(US_Typedef *object) {
-  if (object == 0)
-    return;
+void Ultrasonic_Detect(US_Typedef* object) {
+  if (object == 0) return;
   object->range_mm = Ultrasonic_Read();
   object->detected = (object->range_mm < ULTRASONIC_DETECT_RANGE_MM) ? 1U : 0U;
 }

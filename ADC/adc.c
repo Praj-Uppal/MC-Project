@@ -1,4 +1,8 @@
-
+/*
+  A1925661 - Prajwal Uppal
+  A1924760 - Vatsal J Thakkar
+  A1926225 - Joshua Bonython
+*/
 #include <stdint.h>
 #define STM32G474xx
 #include "adc.h"
@@ -15,8 +19,7 @@ void ADC_Init(void) {
   ADC1->CR &= ~ADC_CR_DEEPPWD;
   ADC1->CR |= ADC_CR_ADVREGEN;
   /* Allow the voltage regulator to stabilise . */
-  for (volatile uint32_t i = 0U; i < 1000U; ++i)
-    __NOP();
+  for (volatile uint32_t i = 0U; i < 1000U; ++i) __NOP();
   /* Calibrate ADC1 in single - ended mode . */
   ADC1->CR &= ~ADC_CR_ADCALDIF;
   ADC1->CR |= (1 << 31U);
@@ -31,8 +34,7 @@ void ADC_Init(void) {
 
 uint16_t ADC_Read(uint8_t channel) {
   /* This driver supports ADC1 regular channels 1 to 18. */
-  if ((channel < 1U) || (channel > 18U))
-    return 0U;
+  if ((channel < 1U) || (channel > 18U)) return 0U;
   /* Select one regular conversion and place the channel in SQ1 . */
   ADC1->SQR1 = ((uint32_t)channel << ADC_SQR1_SQ1_Pos);
   /* Select the longest sample time for a stable sensor measurement

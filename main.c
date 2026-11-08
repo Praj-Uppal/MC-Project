@@ -1,4 +1,10 @@
-/*******Headers**********/
+
+/*
+  A1925661 - Prajwal Uppal
+  A1924760 - Vatsal J Thakkar
+  A1926225 - Joshua Bonython
+*/
+// Headers
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -44,7 +50,8 @@
 
 #define LAYOUT_MIDPOINT \
   285  // Try to set between halfway of layout A detected bollard (A1) and
-       // layout B first detected bollard (B1). From our testing, 285 worked.
+       // layout B first detected bollard (B1).
+       // From our testing, 285 worked consistently.
        // If distance above, we are in layout A else if below, layout B.
 
 #define DEPOSIT_THRESH 260  // markers in the storage are around 140 mm.
@@ -152,6 +159,7 @@ typedef enum {
 // Global variables
 
 // debugging variables
+/*
 volatile int16_t debug_d;
 volatile int16_t debug_align_min_d;
 volatile int16_t debug_deposit_d;
@@ -172,7 +180,7 @@ volatile uint16_t debug_bumper;
 volatile uint16_t debug_wheeldrop;
 volatile int16_t
     debug_layout;  // Variable to store the current layout state for debugging
-
+*/
 // Useful variables
 volatile LayoutState layout;  // Variable for current layout state
 
@@ -180,24 +188,24 @@ volatile Kobuki_Typedef
     kobuki;  // Kobuki is global scope as used in many functions.
 
 // FSM state variables (global scope so reset_all_fsms() can reach them as well)
-volatile static ALIGNstate align_state = ALIGN_INIT;
-volatile static PFstate pathfind_state = STAGE_ROTATE1;
-volatile static STORAGEstate storage_state = STORAGE_ORIENT;
-volatile static DEPOSITstate deposit_state = DEPOSIT_ALIGN;
+static volatile ALIGNstate align_state = ALIGN_INIT;
+static volatile PFstate pathfind_state = STAGE_ROTATE1;
+static volatile STORAGEstate storage_state = STORAGE_ORIENT;
+static volatile DEPOSITstate deposit_state = DEPOSIT_ALIGN;
 
 // Results from the last align sweep. Distance to closest object in
 // align_min_d, absolute heading in gyroscope ticks [-18000,18000] to object in
 // align_theta.
-volatile static int16_t align_min_d;
-volatile static int32_t align_theta;
+static volatile int16_t align_min_d;
+static volatile int32_t align_theta;
 
 // Absolute heading (also ticks) of the blocking bollard, set after initial
 // search align. Every later turn is relative to this, so we can use absolute
 // headings, and errors from turning do not snowball.
-volatile static int32_t headingRef;
+static volatile int32_t headingRef;
 
 // course-correction turn (degrees) from Drive_To_Edge().
-volatile static int16_t edge_correction;
+static volatile int16_t edge_correction;
 
 // Functions
 
@@ -274,7 +282,7 @@ bool MotionUpdate(void) {
 bool align(int16_t distanceThresh) {
   // Initialise left, and right theta. Theta_avg stored in align_theta since
   // thats the angle to object.
-  static int32_t thetaLeft, thetaRight;
+  static volatile int32_t thetaLeft, thetaRight;
 
   // Ultrasonic reading with calibration. Gives distance to object detected.
   int16_t d = Ultrasonic_Read() + TOTAL_CALIBRATION;
