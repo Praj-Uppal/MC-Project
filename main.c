@@ -279,7 +279,7 @@ bool MotionUpdate(void) {
 // Note in practice, we were rotating ACW so actually theta right is detected
 // first and then theta left unlike the flow chart provided.
 
-bool align(int16_t distanceThresh) {
+bool alignFSM(int16_t distanceThresh) {
   // Initialise left, and right theta. Theta_avg stored in align_theta since
   // thats the angle to object.
   static volatile int32_t thetaLeft, thetaRight;
@@ -516,7 +516,7 @@ bool depositFSM(void) {
   switch (deposit_state) {
       // Align with bollard
     case DEPOSIT_ALIGN:
-      if (align(DEPOSIT_THRESH))  // If align finished
+      if (alignFSM(DEPOSIT_THRESH))  // If align finished
       {
         // If align distance below the close margin (i.e too close to bollard)
         if (align_min_d <= ULTRASONIC_MIN + DETECT_MARGIN) {
@@ -636,7 +636,7 @@ int main(void) {
       case SEARCH:  // Align with the blocking bollard, its distance gives
                     // the layout.
         // If align has finished
-        if (align(SEARCH_THRESH)) {
+        if (alignFSM(SEARCH_THRESH)) {
           // Set the heading reference to bollard angle.
           headingRef = align_theta;
           // If alignment distnace above the midpoint of the layout (285), then
